@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Submit all queued TrustGraph ratings as one batch (chunked if > 100).
 # Silent on success; removes the queue file. Errors to stderr, exit non-zero;
-# the queue is preserved so a retry is possible.
+# the queue is rewritten to contain ONLY the unsent events so a retry doesn't
+# double-submit chunks that already landed.
 #
-# Defensively normalizes task_tags and failure_modes at submit time too —
-# tg-rate also normalizes at queue-write, but old queue entries written before
-# the normalization landed get cleaned here.
+# Defensively normalizes task_tags, failure_modes, and metrics at submit time
+# (tg-rate also normalizes at queue-write — this is belt-and-suspenders for
+# entries written before normalization landed).
 #
 # Usage: scripts/tg-flush
 #
@@ -43,7 +44,7 @@ TRUSTGRAPH_BASE_URL="$TRUSTGRAPH_BASE_URL" \
 TRUSTGRAPH_API_KEY="$TRUSTGRAPH_API_KEY" \
 TRUSTGRAPH_QUEUE="$TRUSTGRAPH_QUEUE" \
 python3 <<'PY'
-import sys, os, json, re, urllib.request, urllib.error
+import sys, os, json, re, math, urllib.request, urllib.error
 
 base = os.environ["TRUSTGRAPH_BASE_URL"]
 key = os.environ["TRUSTGRAPH_API_KEY"]
@@ -61,8 +62,26 @@ def normalize_tag(t):
         return None
     return s if TAG_RE.match(s) else None
 
+def normalize_metric_value(v):
+    """Metrics must be finite numbers. Coerce numeric strings; drop the rest."""
+    if isinstance(v, bool):  # bool is int subclass in Python; not what TG wants
+        return None
+    if isinstance(v, (int, float)):
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+    if isinstance(v, str):
+        try:
+            num = float(v)
+        except (ValueError, TypeError):
+            return None
+        if math.isnan(num) or math.isinf(num):
+            return None
+        return num
+    return None
+
 def normalize_event(ev):
-    """Clean up tag fields that might otherwise trip 422 validation."""
+    """Clean up tag and metric fields that might otherwise trip 422 validation."""
     if not isinstance(ev, dict):
         return ev
     for field in ("task_tags", "failure_modes"):
@@ -77,6 +96,16 @@ def normalize_event(ev):
                 ev[field] = out
             else:
                 del ev[field]
+    if "metrics" in ev and isinstance(ev["metrics"], dict):
+        cleaned = {}
+        for k, v in ev["metrics"].items():
+            nv = normalize_metric_value(v)
+            if nv is not None:
+                cleaned[k] = nv
+        if cleaned:
+            ev["metrics"] = cleaned
+        else:
+            del ev["metrics"]
     return ev
 
 with open(queue_path) as f:
@@ -95,8 +124,23 @@ if not events:
     os.unlink(queue_path)
     sys.exit(0)
 
+def rewrite_queue(remaining):
+    """Persist un-submitted events back to the queue file."""
+    if not remaining:
+        try:
+            os.unlink(queue_path)
+        except FileNotFoundError:
+            pass
+        return
+    tmp_path = queue_path + ".tmp"
+    with open(tmp_path, "w") as out:
+        for ev in remaining:
+            out.write(json.dumps(ev, separators=(",", ":")) + "\n")
+    os.replace(tmp_path, queue_path)
+
 CHUNK = 100
-for i in range(0, len(events), CHUNK):
+N = len(events)
+for i in range(0, N, CHUNK):
     chunk = events[i:i + CHUNK]
     payload = json.dumps({"events": chunk}).encode()
     req = urllib.request.Request(
@@ -114,11 +158,15 @@ for i in range(0, len(events), CHUNK):
             if body:
                 data = json.loads(body)
                 if isinstance(data, dict) and "error" in data:
+                    rewrite_queue(events[i:])
                     sys.exit(f"tg-flush: chunk {i // CHUNK} failed: {data['error']}")
     except urllib.error.HTTPError as e:
+        rewrite_queue(events[i:])
         sys.exit(f"tg-flush: HTTP {e.code} on chunk {i // CHUNK}: {e.read().decode(errors='replace')}")
     except urllib.error.URLError as e:
+        rewrite_queue(events[i:])
         sys.exit(f"tg-flush: network error on chunk {i // CHUNK}: {e.reason}")
 
+# All chunks succeeded.
 os.unlink(queue_path)
 PY

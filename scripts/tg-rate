@@ -7,9 +7,12 @@
 #   See references/rubric.md for the full field list.
 #
 # Appends one JSON line to $TRUSTGRAPH_QUEUE (default ~/.trustgraph/queue.jsonl).
-# Tags in task_tags and failure_modes are normalized to snake_case
-# (^[a-z][a-z0-9_]{0,63}$) — bad tags get coerced or dropped silently so the
-# whole batch isn't rejected later by /v1/scores/batch (all-or-nothing).
+#
+# Normalizations applied (silent — avoids the all-or-nothing 422 trap at flush):
+#   task_tags, failure_modes : coerced to snake_case ^[a-z][a-z0-9_]{0,63}$; bad ones dropped
+#   metrics                  : non-numeric values dropped (rater sometimes emits
+#                              strings like "execution_status":"success" or "latency_unit":"seconds"
+#                              despite the schema requiring finite floats)
 #
 # Use scripts/tg-flush at session end to submit the queue as one batch.
 #
@@ -27,7 +30,7 @@ INPUT=$(cat)
 
 # Validate, normalize, re-emit compactly.
 INPUT="$INPUT" python3 <<'PY' >> "$TRUSTGRAPH_QUEUE"
-import os, sys, json, re
+import os, sys, json, re, math
 
 TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -40,7 +43,6 @@ def normalize_tag(t):
     if not s:
         return None
     if not s[0].isalpha():
-        # Constraint requires leading [a-z]; can't recover from numeric-only.
         return None
     return s if TAG_RE.match(s) else None
 
@@ -55,6 +57,24 @@ def normalize_tag_list(lst):
             out.append(n)
     return out
 
+def normalize_metric_value(v):
+    """Metrics must be finite numbers. Coerce numeric strings; drop the rest."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+    if isinstance(v, str):
+        try:
+            num = float(v)
+        except (ValueError, TypeError):
+            return None
+        if math.isnan(num) or math.isinf(num):
+            return None
+        return num
+    return None
+
 try:
     obj = json.loads(os.environ["INPUT"])
 except json.JSONDecodeError as e:
@@ -65,9 +85,29 @@ if "reviewee" not in obj or "score" not in obj:
     sys.exit("tg-rate: body must include 'reviewee' and 'score'")
 
 if "task_tags" in obj:
-    obj["task_tags"] = normalize_tag_list(obj["task_tags"])
+    cleaned = normalize_tag_list(obj["task_tags"])
+    if cleaned:
+        obj["task_tags"] = cleaned
+    else:
+        del obj["task_tags"]
+
 if "failure_modes" in obj:
-    obj["failure_modes"] = normalize_tag_list(obj["failure_modes"])
+    cleaned = normalize_tag_list(obj["failure_modes"])
+    if cleaned:
+        obj["failure_modes"] = cleaned
+    else:
+        del obj["failure_modes"]
+
+if "metrics" in obj and isinstance(obj["metrics"], dict):
+    cleaned = {}
+    for k, v in obj["metrics"].items():
+        nv = normalize_metric_value(v)
+        if nv is not None:
+            cleaned[k] = nv
+    if cleaned:
+        obj["metrics"] = cleaned
+    else:
+        del obj["metrics"]
 
 print(json.dumps(obj, separators=(",", ":")))
 PY
