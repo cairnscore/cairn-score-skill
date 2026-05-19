@@ -3,9 +3,13 @@
 # Silent on success; removes the queue file. Errors to stderr, exit non-zero;
 # the queue is preserved so a retry is possible.
 #
+# Defensively normalizes task_tags and failure_modes at submit time too —
+# tg-rate also normalizes at queue-write, but old queue entries written before
+# the normalization landed get cleaned here.
+#
 # Usage: scripts/tg-flush
 #
-# Requires TRUSTGRAPH_API_KEY (use scripts/mint-key.sh if you don't have one).
+# Requires TRUSTGRAPH_API_KEY (auto-minted into ~/.trustgraph/api-key on first run).
 
 set -euo pipefail
 command -v python3 >/dev/null || { echo "tg-flush: python3 required" >&2; exit 127; }
@@ -39,16 +43,56 @@ TRUSTGRAPH_BASE_URL="$TRUSTGRAPH_BASE_URL" \
 TRUSTGRAPH_API_KEY="$TRUSTGRAPH_API_KEY" \
 TRUSTGRAPH_QUEUE="$TRUSTGRAPH_QUEUE" \
 python3 <<'PY'
-import sys, os, json, urllib.request, urllib.error
+import sys, os, json, re, urllib.request, urllib.error
 
 base = os.environ["TRUSTGRAPH_BASE_URL"]
 key = os.environ["TRUSTGRAPH_API_KEY"]
 queue_path = os.environ["TRUSTGRAPH_QUEUE"]
 
+TAG_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+def normalize_tag(t):
+    if not isinstance(t, str):
+        return None
+    s = t.strip().lower()
+    s = re.sub(r"[^a-z0-9_]+", "_", s)
+    s = s.strip("_")[:64]
+    if not s or not s[0].isalpha():
+        return None
+    return s if TAG_RE.match(s) else None
+
+def normalize_event(ev):
+    """Clean up tag fields that might otherwise trip 422 validation."""
+    if not isinstance(ev, dict):
+        return ev
+    for field in ("task_tags", "failure_modes"):
+        if field in ev and isinstance(ev[field], list):
+            out, seen = [], set()
+            for t in ev[field]:
+                n = normalize_tag(t)
+                if n and n not in seen:
+                    seen.add(n)
+                    out.append(n)
+            if out:
+                ev[field] = out
+            else:
+                del ev[field]
+    return ev
+
 with open(queue_path) as f:
-    events = [json.loads(line) for line in f if line.strip()]
+    events = []
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(normalize_event(json.loads(line)))
+        except json.JSONDecodeError:
+            # Drop unparseable lines silently; they would have failed validation anyway.
+            continue
 
 if not events:
+    os.unlink(queue_path)
     sys.exit(0)
 
 CHUNK = 100
