@@ -23,18 +23,14 @@ command -v python3 >/dev/null || { echo "tg-flush: python3 required" >&2; exit 1
 : "${TRUSTGRAPH_QUEUE:=$HOME/.trustgraph/queue.jsonl}"
 : "${TRUSTGRAPH_KEY_FILE:=$HOME/.trustgraph/api-key}"
 
-# Resolve TRUSTGRAPH_API_KEY: env → persisted key file → mint + persist.
+# Resolve TRUSTGRAPH_API_KEY via mint-key.sh, which owns the read-or-mint-and-
+# persist critical section under fcntl.flock on ${TRUSTGRAPH_KEY_FILE}.lock.
+# Honors the same TRUSTGRAPH_KEY_FILE / TRUSTGRAPH_BASE_URL env vars so both
+# surfaces coordinate on one file and one lock.
 if [[ -z "${TRUSTGRAPH_API_KEY:-}" ]]; then
-  if [[ -s "$TRUSTGRAPH_KEY_FILE" ]]; then
-    TRUSTGRAPH_API_KEY=$(<"$TRUSTGRAPH_KEY_FILE")
-  else
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    TRUSTGRAPH_API_KEY=$(bash "$SCRIPT_DIR/mint-key.sh")
-    mkdir -p "$(dirname "$TRUSTGRAPH_KEY_FILE")"
-    umask 077
-    printf '%s\n' "$TRUSTGRAPH_API_KEY" > "$TRUSTGRAPH_KEY_FILE"
-    chmod 600 "$TRUSTGRAPH_KEY_FILE"
-  fi
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  export TRUSTGRAPH_KEY_FILE TRUSTGRAPH_BASE_URL
+  TRUSTGRAPH_API_KEY=$(bash "$SCRIPT_DIR/mint-key.sh")
   export TRUSTGRAPH_API_KEY
 fi
 

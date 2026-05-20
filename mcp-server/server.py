@@ -19,6 +19,7 @@ import os  # noqa: E402
 from collections.abc import AsyncIterator  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
 from typing import Annotated, Literal  # noqa: E402
 
 import httpx  # noqa: E402
@@ -284,6 +285,46 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
 
 mcp = FastMCP("trustgraph", lifespan=lifespan)
+
+
+# ---- Key loader (Phase 3) ----
+# Shells out to skill/scripts/mint-key.sh, which owns read-or-mint-and-persist
+# under fcntl.flock. Lazy: called once per server process on first rate call;
+# the result is cached in AppContext.api_key for the lifetime of the server.
+
+def _resolve_mint_script() -> str:
+    """Path to mint-key.sh. Default: clone-relative
+    `<server.py-dir>/../skill/scripts/mint-key.sh`. Override via env."""
+    override = os.environ.get("TRUSTGRAPH_MINT_SCRIPT")
+    if override:
+        return override
+    return str(Path(__file__).resolve().parent.parent / "skill" / "scripts" / "mint-key.sh")
+
+
+async def _load_api_key(app_ctx: AppContext) -> str:
+    """Resolve the TrustGraph API key. Cached in app_ctx.api_key after first call."""
+    if app_ctx.api_key:
+        return app_ctx.api_key
+    script = _resolve_mint_script()
+    if not os.path.isfile(script):
+        raise ToolError(
+            f"mint-key.sh not found at {script}. Set TRUSTGRAPH_MINT_SCRIPT "
+            "to the path of skill/scripts/mint-key.sh."
+        )
+    proc = await asyncio.create_subprocess_exec(
+        "bash", script,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = stderr.decode(errors="replace").strip() or "(no stderr)"
+        raise ToolError(f"mint-key.sh failed (exit {proc.returncode}): {err}")
+    key = stdout.decode().strip()
+    if not key:
+        raise ToolError("mint-key.sh succeeded but returned empty output")
+    app_ctx.api_key = key
+    return key
 
 
 # ---- Request helper ----
