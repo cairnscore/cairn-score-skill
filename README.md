@@ -1,18 +1,20 @@
-# trustgraph — Claude Code skill
+# trustgraph — reputation tooling for Claude Code + Claude Desktop
 
-A Claude Code skill that rates every external resource your agent touches —
-WebFetch, WebSearch, MCP tools, curl invocations — invisibly in the background,
-feeding ratings into the TrustGraph reputation API so your agent (and others)
-can check before consuming an unknown source.
+Two surfaces over the same TrustGraph reputation API:
 
-## Quick install
+- **`skill/`** — a Claude Code skill that rates every external resource your agent touches (WebFetch, WebSearch, MCP tools, curl invocations) **invisibly in the background** via `PostToolUse` hooks. The model never sees TrustGraph in chat.
+- **`mcp-server/`** — an MCP server that exposes the same trust capabilities to **Claude Desktop** (and any MCP-capable host: Cursor, Zed, Continue, the API directly) as six callable tools. The model chooses when to invoke; tool calls are visible in chat.
+
+Both surfaces share `~/.trustgraph/` state — same key file, same reviewer identity (first-mint-wins), so ratings accumulate under one signal regardless of which surface produced them.
+
+## Quick install — Claude Code skill
 
 ```bash
 git clone https://github.com/GusEllerm/trustgraph-skill.git ~/code/trustgraph-skill && \
   bash ~/code/trustgraph-skill/skill/install.sh
 ```
 
-The repo holds two surfaces side-by-side — the Claude Code skill (under `skill/`) and an MCP server (under `mcp-server/`, in progress). The installer copies the skill content from `skill/` to `~/.claude/skills/trustgraph/` and registers the hooks; clone the repo anywhere convenient (the example above uses `~/code/`).
+Clone the repo anywhere convenient (the example uses `~/code/`); the installer copies the skill content from `skill/` to `~/.claude/skills/trustgraph/` and registers the hooks.
 
 The installer prompts for a rater backend:
 - **`api`** — direct Anthropic API. Needs an API key from `console.anthropic.com`. Cheap, fast.
@@ -21,6 +23,72 @@ The installer prompts for a rater backend:
 Then start a fresh Claude Code session. Hooks fire automatically.
 
 To update later: `bash ~/code/trustgraph-skill/skill/update-skill.sh` (the script does `git pull` in the clone and re-runs `install.sh`).
+
+## Claude Desktop (MCP server)
+
+The same TrustGraph capabilities are exposed under `mcp-server/` as a six-tool MCP server: `score`, `retrieve`, `rank`, `capabilities`, `get_rubric`, `rate`.
+
+Unlike the skill — which hooks in invisibly on every tool call — MCP tool calls are visible in chat. The model decides when to invoke; the agent's standing context carries the tool descriptions (~1500 tokens for the six, ~500 of which is the rubric condensate embedded in `rate`).
+
+### Install (hand-edit JSON — recommended)
+
+Hand-edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS; adjust path on other OSes) and merge the `trustgraph` entry into `mcpServers`:
+
+```jsonc
+{
+  "mcpServers": {
+    "trustgraph": {
+      "command": "uv",
+      "args": [
+        "--directory", "/absolute/path/to/trustgraph-skill/mcp-server",
+        "run", "--locked",
+        "python", "server.py"
+      ],
+      "env": {
+        // Required: path to the shared mint-key.sh script.
+        "TRUSTGRAPH_MINT_SCRIPT": "/absolute/path/to/trustgraph-skill/skill/scripts/mint-key.sh",
+
+        // Recommended: silence third-party deprecation noise on stdout.
+        "PYTHONWARNINGS": "ignore"
+
+        // Optional: override the TrustGraph deployment URL.
+        // See the DNS-takeover warning below — strongly recommended for any
+        // non-throwaway use.
+        // "TRUSTGRAPH_BASE_URL": "https://your-trustgraph-deployment.example",
+
+        // Optional: enable side log of every request/response (mode 0600).
+        // "TRUSTGRAPH_DEBUG_LOG": "/Users/you/.trustgraph/mcp-debug.log",
+
+        // Not set here: TRUSTGRAPH_API_KEY (auto-minted on first `rate` call
+        // via TRUSTGRAPH_MINT_SCRIPT; provide it only for stable identity).
+      }
+    }
+  }
+}
+```
+
+Replace both absolute paths with your clone location. Restart Claude Desktop after editing. Verify by opening the Desktop server-log panel — the `trustgraph` MCP should appear with all six tools listed.
+
+The MCP shares `~/.trustgraph/api-key` with the Code skill via the refactored `mint-key.sh`, which owns read-or-mint-and-persist under `fcntl.flock`. First surface to mint owns the reviewer identity baked into the key; both surfaces accumulate ratings under that identity.
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `score(type, external_id, detail="summary"|"full")` | Reputation check before consuming a URL or MCP capability. `detail="full"` returns the combined profile (dimensions + top failure modes + top capability tags). |
+| `retrieve(type, external_id, query?, k, ...)` | Past events for one entity, optionally ranked by similarity to a query. Rationales truncated to 200 chars. |
+| `rank(capability_tag, rank_by, k, ...)` | Cross-entity ranking on a chosen dimension. The "who's the [adj]?" lens. |
+| `capabilities(limit)` | List rated capability tags with event and entity counts. |
+| `get_rubric()` | Full scoring rubric: anchors, dimensions with inversion notes, weight semantics, examples. |
+| `rate(type, external_id, score, weight, ...)` | Submit a rating after consuming/invoking. Per-field validation: dimension key whitelist, metric key regex, snake_case tag normalization, reserved-prefix check. |
+
+### Shortcut alternative
+
+`uv run --locked mcp install server.py --name "TrustGraph"` writes the Desktop config entry automatically. Convenient for local-dev iteration, but behavior has shifted across `mcp[cli]` SDK versions and the entry still bakes in your clone's absolute path. The hand-edit above is the durable path.
+
+### ⚠️ DNS-takeover warning
+
+The default `TRUSTGRAPH_BASE_URL` is an experimental AWS App Runner subdomain (`mep39camvm.us-east-1.awsapprunner.com`). **If the subdomain is ever reclaimed, plaintext API keys would leak to the new owner on next call.** Override `TRUSTGRAPH_BASE_URL` to your own TrustGraph deployment for anything beyond local experimentation.
 
 ## What it does
 
@@ -154,7 +222,7 @@ bash ~/.claude/skills/trustgraph/uninstall.sh
 - Hooks fire on every Bash tool call. The script filters by network-verb (curl/wget/gh api/etc.) and exits silently for non-network commands. Adds ~10–20 ms per Bash call.
 - The rater can occasionally produce mildly hallucinated rationale text (anchored to the briefing, with confabulation around it). The structural fields — score, weight, dimensions, failure_modes — are reliable; the prose rationale is best-effort.
 - `/v1/scores` has no delete endpoint, so a misfire becomes a stale event in TrustGraph.
-- Designed for Claude Code only. Claude Desktop has no equivalent hook system; the same scripts can be driven by a sidecar process if needed.
+- The Claude Code skill is invisible (hooks); the Claude Desktop MCP is visible in chat (tool calls). MCP-side ratings depend on the model voluntarily calling `score` / `rate` — even with proactive description text, expect a lower fire rate than the deterministic hook path. Watch first-use sessions for under-firing and consider pairing the MCP with a claude.ai skill that primes proactive use at conversation start.
 
 ## License / authorship
 
