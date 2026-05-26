@@ -25,7 +25,7 @@ This file covers the procedural skeleton. Detailed reference material lives alon
 - `scripts/tg-retrieve` — compact retrieve; one header line + one line per event
 - `scripts/tg-discover` — free-text task → ranked entities; one line per hit
 - `scripts/tg-history` — time-bucketed score trend; one line per bucket
-- `scripts/tg-doctor` — one-shot install/runtime health check; ✓/✗ per check
+- `scripts/tg-doctor` — **run first when anything trustgraph-related fails** (mint, flush, score lookup). One-shot install/runtime health check; ✓/✗ per check
 - `scripts/mint-key.sh` — mints a TrustGraph API key (ephemeral by default, stable identity on request)
 
 **Pick the right surface for what's connected:**

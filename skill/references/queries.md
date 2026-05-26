@@ -1,6 +1,6 @@
 # Workflow 3 — Investigating an entity with richer queries
 
-Beyond the headline `GET /v1/score`, five endpoints answer questions the scalar doesn't. Reach for them when the user asks something dimension-specific ("is X fast?", "who's cheapest?"), when you want supporting rationales, or when you know what you want done but not which tool fits. All five are unauthenticated.
+Beyond the headline `GET /v1/score`, six endpoints answer questions the scalar doesn't. Reach for them when the user asks something dimension-specific ("is X fast?", "who's cheapest?"), when you want supporting rationales, when you know what you want done but not which tool fits, or when you want a time-bucketed trend. All six are unauthenticated.
 
 ## Disambiguation: which endpoint for which question
 

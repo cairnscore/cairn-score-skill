@@ -8,6 +8,11 @@
 #   mint-key.sh agent://your-org/your-agent     # same, with stable identity
 #   mint-key.sh --write                         # persist silently, no stdout
 #   mint-key.sh --write agent://your-org/...    # --write + identity (any order)
+#   mint-key.sh --remint                        # skip the cached-key check;
+#                                               #   always POST /v1/keys and
+#                                               #   overwrite. For 401-recovery
+#                                               #   when the persisted key is
+#                                               #   known revoked.
 #
 # Env:
 #   TRUSTGRAPH_KEY_FILE   default: $HOME/.trustgraph/api-key
@@ -49,14 +54,16 @@ LOCK="${TRUSTGRAPH_KEY_FILE}.lock"
 mkdir -p "$(dirname "$TRUSTGRAPH_KEY_FILE")"
 chmod 700 "$(dirname "$TRUSTGRAPH_KEY_FILE")"
 
-# Arg parsing: --write may appear in any position; the remaining arg (if any)
-# is the reviewer identity. Last positional wins if multiple are given.
+# Arg parsing: --write / --remint may appear in any position; the remaining
+# arg (if any) is the reviewer identity. Last positional wins if multiple.
 WRITE_ONLY=0
+FORCE_REMINT=0
 IDENTITY=""
 for arg in "$@"; do
   case "$arg" in
-    --write) WRITE_ONLY=1 ;;
-    *) IDENTITY="$arg" ;;
+    --write)  WRITE_ONLY=1 ;;
+    --remint) FORCE_REMINT=1 ;;
+    *)        IDENTITY="$arg" ;;
   esac
 done
 : "${IDENTITY:=agent://anon/$(python3 -c 'import uuid; print(uuid.uuid4())')}"
@@ -67,8 +74,11 @@ exec 9>"$LOCK"
 python3 -c 'import fcntl,sys; fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)' <&9
 
 # Double-check after lock acquire: another process may have minted while we
-# were waiting for the lock.
-if [[ -s "$TRUSTGRAPH_KEY_FILE" ]]; then
+# were waiting for the lock. --remint bypasses the cache (overwrites the
+# stored key) so the 401-recovery path in server.py actually gets a fresh
+# key — without --remint, a revoked key would just be re-emitted from the
+# file and we'd loop on 401.
+if [[ "$FORCE_REMINT" -ne 1 ]] && [[ -s "$TRUSTGRAPH_KEY_FILE" ]]; then
   [[ "$WRITE_ONLY" -eq 1 ]] || cat "$TRUSTGRAPH_KEY_FILE"
   exit 0
 fi

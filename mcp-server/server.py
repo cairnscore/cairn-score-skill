@@ -273,11 +273,12 @@ class DiscoverResult(BaseModel):
 
 
 class EntityRef(BaseModel):
-    """Single entity reference for score_batch. Field alias `type` keeps the
-    JSON-RPC schema using `type` (matching the server) while the Python
-    attribute is `entity_type` to avoid shadowing the builtin."""
-    model_config = ConfigDict(populate_by_name=True)
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")]
+    """Single entity reference for score_batch. Field is `type` (matches
+    the server's wire shape). Yes it shadows the Python builtin — the
+    Field(alias="type") rename tried in Phase 3b broke FastMCP dispatch
+    because model_dump uses the alias, then ** unpacks into kwargs the
+    function doesn't accept. See docs/REVIEW-REPORT-2.md."""
+    type: Literal["data_source", "capability", "agent"]  # noqa: A002
     external_id: Annotated[str, Field(min_length=1)]
 
 
@@ -462,9 +463,13 @@ def _resolve_mint_script() -> str:
     return str(Path(__file__).resolve().parent.parent / "skill" / "scripts" / "mint-key.sh")
 
 
-async def _load_api_key(app_ctx: AppContext) -> str:
-    """Resolve the TrustGraph API key. Cached in app_ctx.api_key after first call."""
-    if app_ctx.api_key:
+async def _load_api_key(app_ctx: AppContext, *, force_remint: bool = False) -> str:
+    """Resolve the TrustGraph API key. Cached in app_ctx.api_key after first call.
+
+    `force_remint=True` bypasses both the in-process cache and the on-disk
+    cache that mint-key.sh keeps — used by the 401 retry in `rate` so a
+    revoked key doesn't get re-emitted in a loop."""
+    if app_ctx.api_key and not force_remint:
         return app_ctx.api_key
     script = _resolve_mint_script()
     if not os.path.isfile(script):
@@ -472,8 +477,11 @@ async def _load_api_key(app_ctx: AppContext) -> str:
             f"mint-key.sh not found at {script}. Set TRUSTGRAPH_MINT_SCRIPT "
             "to the path of skill/scripts/mint-key.sh."
         )
+    cmd = ["bash", script]
+    if force_remint:
+        cmd.append("--remint")
     proc = await asyncio.create_subprocess_exec(
-        "bash", script,
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -645,7 +653,7 @@ def _truncate_summary(summary: "SummaryOut | None") -> None:
 @mcp.tool()
 async def score(
     ctx: Context[ServerSession, AppContext],
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")],
+    type: Literal["data_source", "capability", "agent"],  # noqa: A002 — shadows builtin; FastMCP dispatch needs the param name to match the wire-shape key
     external_id: Annotated[str, Field(min_length=1)],
     context: str | None = None,
     scorer: str | None = None,
@@ -675,14 +683,15 @@ async def score(
 
     Optional `context` pins the scoring domain (e.g. "factual-accuracy");
     omit for general trust. `scorer` selects a non-default scorer for
-    shadow-execution comparison (use `get_rubric()` won't help — scorers
-    are server-side config; omit unless you know what you're picking).
+    shadow-execution comparison — omit unless you know what you're
+    picking; scorers are server-side config and `get_rubric()` won't list
+    them.
 
     Example: user pastes `https://random-blog.example/post/123` and asks
     you to summarize — call `score` BEFORE fetching. Pair with `rate`
     after consuming.
     """
-    params: dict = {"type": entity_type, "external_id": external_id}
+    params: dict = {"type": type, "external_id": external_id}
     if context is not None:
         params["context"] = context
     if scorer is not None:
@@ -694,7 +703,7 @@ async def score(
 @mcp.tool()
 async def profile(
     ctx: Context[ServerSession, AppContext],
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")],
+    type: Literal["data_source", "capability", "agent"],  # noqa: A002 — shadows builtin; FastMCP dispatch needs the param name to match the wire-shape key
     external_id: Annotated[str, Field(min_length=1)],
     context: str | None = None,
     top_failure_modes: Annotated[int | None, Field(ge=1, le=20)] = None,
@@ -733,7 +742,7 @@ async def profile(
     Example: user asks "what do you know about https://api.foo.com?" —
     call `profile(type="data_source", external_id="https://api.foo.com")`.
     """
-    params: dict = {"type": entity_type, "external_id": external_id}
+    params: dict = {"type": type, "external_id": external_id}
     if context is not None:
         params["context"] = context
     if top_failure_modes is not None:
@@ -755,7 +764,7 @@ async def profile(
 @mcp.tool()
 async def retrieve(
     ctx: Context[ServerSession, AppContext],
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")],
+    type: Literal["data_source", "capability", "agent"],  # noqa: A002 — shadows builtin; FastMCP dispatch needs the param name to match the wire-shape key
     external_id: Annotated[str, Field(min_length=1)],
     query: str | None = None,
     k: Annotated[int, Field(ge=1, le=50)] = 5,
@@ -791,7 +800,7 @@ async def retrieve(
     query="reliability problems failures")`.
     """
     body: dict = {
-        "entity": {"type": entity_type, "external_id": external_id},
+        "entity": {"type": type, "external_id": external_id},
         "k": k,
         "include_aggregates": include_aggregates,
     }
@@ -870,7 +879,14 @@ async def rank(
     if limit_candidates is not None:
         body["limit_candidates"] = limit_candidates
     data = await _request(ctx, "POST", "/v1/rank", json=body)
-    return RankResult.model_validate(data)
+    result = RankResult.model_validate(data)
+    # Gap-fix from REVIEW-REPORT-2: supporting_event carries reviewer
+    # rationale + task — same surface as discover.best_event / retrieve
+    # events. Apply RATIONALE_TRUNCATE here too.
+    for r in result.results:
+        if r.supporting_event is not None:
+            _truncate_event(r.supporting_event)
+    return result
 
 
 @mcp.tool()
@@ -1001,9 +1017,7 @@ async def score_batch(
     `score_batch(refs=[{"type": "data_source", "external_id": url}
     for url in urls])` and use confidence to gate whether to fetch.
     """
-    # by_alias=True serializes EntityRef.entity_type → "type" (the alias),
-    # matching the server's expected wire shape.
-    body = {"refs": [r.model_dump(by_alias=True) for r in refs]}
+    body = {"refs": [r.model_dump() for r in refs]}
     data = await _request(ctx, "POST", "/v1/score/batch", json=body)
     return [ScoreBatchItemOut.model_validate(item) for item in data]
 
@@ -1011,7 +1025,7 @@ async def score_batch(
 @mcp.tool()
 async def score_history(
     ctx: Context[ServerSession, AppContext],
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")],
+    type: Literal["data_source", "capability", "agent"],  # noqa: A002 — shadows builtin; FastMCP dispatch needs the param name to match the wire-shape key
     external_id: Annotated[str, Field(min_length=1)],
     window: str = "7d",
     bucket: str = "1d",
@@ -1038,7 +1052,7 @@ async def score_history(
     window="30d", bucket="1d")`.
     """
     params: dict = {
-        "type": entity_type,
+        "type": type,
         "external_id": external_id,
         "window": window,
         "bucket": bucket,
@@ -1108,7 +1122,7 @@ class RateResult(BaseModel):
 @mcp.tool()
 async def rate(
     ctx: Context[ServerSession, AppContext],
-    entity_type: Annotated[Literal["data_source", "capability", "agent"], Field(alias="type")],
+    type: Literal["data_source", "capability", "agent"],  # noqa: A002 — shadows builtin; FastMCP dispatch needs the param name to match the wire-shape key
     external_id: Annotated[str, Field(min_length=1)],
     score: Annotated[float, Field(ge=0, le=1, description="Holistic 0–1 rating")],
     weight: Annotated[float, Field(gt=0, le=1)] = 1.0,
@@ -1182,7 +1196,7 @@ async def rate(
     # returns 422. We build the body field-by-field below; do not add fields
     # without checking the live spec.
     body: dict = {
-        "reviewee": {"type": entity_type, "external_id": external_id},
+        "reviewee": {"type": type, "external_id": external_id},
         "score": score,
         "weight": weight,
     }
@@ -1259,8 +1273,12 @@ async def rate(
             headers={"X-Api-Key": api_key},
         )
     except _UnauthorizedError:
+        # force_remint=True passes --remint to mint-key.sh, which skips the
+        # double-check on the persisted key file. Without it, the script
+        # would see the still-revoked key on disk and re-emit it — and the
+        # "retry" would loop on the same 401.
         app_ctx.api_key = None
-        api_key = await _load_api_key(app_ctx)
+        api_key = await _load_api_key(app_ctx, force_remint=True)
         try:
             data = await _request(
                 ctx, "POST", "/v1/scores",
@@ -1269,9 +1287,9 @@ async def rate(
             )
         except _UnauthorizedError:
             raise ToolError(
-                "rate failed: fresh mint also rejected with 401 — likely an "
-                "API-side problem (revoked at the per-IP cohort level, or "
-                "the deployment is misconfigured). Tell the user."
+                "rate failed: freshly minted key also rejected with 401 — "
+                "likely an API-side problem (revoked at the per-IP cohort "
+                "level, or the deployment is misconfigured). Tell the user."
             ) from None
     return RateResult.model_validate(data or {})
 
