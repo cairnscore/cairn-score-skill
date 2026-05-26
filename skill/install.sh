@@ -108,8 +108,14 @@ case "$BACKEND" in
       fi
     fi
     mkdir -p "$(dirname "$KEY_FILE")"
-    (umask 077; printf '%s\n' "$ANTHROPIC_API_KEY" > "$KEY_FILE")
-    chmod 600 "$KEY_FILE"
+    chmod 700 "$(dirname "$KEY_FILE")"
+    # Atomic write: never observable at default umask perms, never partial
+    # under a concurrent reader. Same pattern as mint-key.sh.
+    umask 077
+    tmp=$(mktemp "${KEY_FILE}.XXXXXX")
+    chmod 600 "$tmp"
+    printf '%s\n' "$ANTHROPIC_API_KEY" > "$tmp"
+    mv -f "$tmp" "$KEY_FILE"
     echo "  key persisted to $KEY_FILE"
     ;;
   claude-cli)

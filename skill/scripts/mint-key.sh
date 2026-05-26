@@ -35,8 +35,15 @@ trap 'exec 9>&-' EXIT
 command -v python3 >/dev/null || { echo "mint-key.sh: python3 required" >&2; exit 127; }
 command -v curl >/dev/null || { echo "mint-key.sh: curl required" >&2; exit 127; }
 
-: "${TRUSTGRAPH_KEY_FILE:=$HOME/.trustgraph/api-key}"
 : "${TRUSTGRAPH_BASE_URL:=https://mep39camvm.us-east-1.awsapprunner.com}"
+
+# Key file default is URL-scoped so a key minted against one host is never
+# silently reused against another (DNS-takeover / env-override safety).
+# Explicit TRUSTGRAPH_KEY_FILE override bypasses the scheme entirely.
+if [[ -z "${TRUSTGRAPH_KEY_FILE:-}" ]]; then
+  HOST=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.argv[1]).hostname or "default")' "$TRUSTGRAPH_BASE_URL")
+  TRUSTGRAPH_KEY_FILE="$HOME/.trustgraph/keys/${HOST}.key"
+fi
 LOCK="${TRUSTGRAPH_KEY_FILE}.lock"
 
 mkdir -p "$(dirname "$TRUSTGRAPH_KEY_FILE")"
@@ -72,10 +79,18 @@ RESP=$(curl -sS --fail -X POST "$TRUSTGRAPH_BASE_URL/v1/keys" \
   -H "Content-Type: application/json" -d "$PAYLOAD")
 KEY=$(python3 -c '
 import sys, json
-data = json.loads(sys.stdin.read())
-if "api_key" not in data:
-    sys.exit("mint-key.sh: " + json.dumps(data))
-print(data["api_key"])
+try:
+    data = json.loads(sys.stdin.read())
+except json.JSONDecodeError:
+    sys.exit("mint-key.sh: server response was not valid JSON")
+if not isinstance(data, dict):
+    sys.exit("mint-key.sh: unexpected mint response (non-object)")
+key = data.get("api_key")
+if not isinstance(key, str) or not key:
+    err = data.get("error") if isinstance(data, dict) else None
+    code = err.get("code") if isinstance(err, dict) else "unknown"
+    sys.exit(f"mint-key.sh: mint failed (code={code})")
+print(key)
 ' <<< "$RESP")
 
 # Atomic persist: tempfile in the same dir (same filesystem → mv is rename),

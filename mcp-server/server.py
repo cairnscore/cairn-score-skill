@@ -480,16 +480,63 @@ async def _request(
         )
 
     if resp.status_code >= 400:
-        body_excerpt = resp.text[:500]
+        body_excerpt = _scrub_secrets(resp.text[:500])
         try:
             err = (resp.json() or {}).get("error") or {}
             code = err.get("code") or "unknown"
-            msg = err.get("message") or body_excerpt
+            msg = _scrub_secrets(err.get("message") or body_excerpt)
             raise ToolError(f"TrustGraph {resp.status_code} {code}: {msg}")
         except ValueError:
             raise ToolError(f"TrustGraph {resp.status_code}: {body_excerpt}")
 
     return resp.json()
+
+
+# ---- Secret + free-text scrubbers ----
+# Defense-in-depth: if a misconfigured upstream ever echoes request headers
+# in an error body, scrub the key before it lands in agent context. And cap
+# free-text (rationale, task, summary content) so injected reviewer rationales
+# can't run away with the agent's context window — applies uniformly across
+# retrieve, discover, and profile (pooled_events + summary).
+
+_SECRET_HEADER_RE = re.compile(
+    r"(X-Api-Key|Authorization)\s*:\s*[^\r\n]+", re.IGNORECASE
+)
+
+
+def _scrub_secrets(text: str) -> str:
+    """Replace `X-Api-Key: ...` / `Authorization: ...` substrings with REDACTED.
+    `[^\\r\\n]+` matches through end of line so `Authorization: Bearer xyz...`
+    is fully scrubbed (not just `Bearer`)."""
+    return _SECRET_HEADER_RE.sub(r"\1: [REDACTED]", text)
+
+
+def _truncate_text(s: str | None, max_chars: int) -> str | None:
+    """Cap a free-text field at max_chars, marking the cut with '...'."""
+    if s is None or len(s) <= max_chars:
+        return s
+    return s[:max_chars - 3] + "..."
+
+
+def _truncate_event(ev: Event) -> None:
+    """In-place truncation of rationale + task fields on an EventSnippet.
+    Both are user-supplied (rationale is the headline injection surface;
+    task is shorter but still attacker-controlled)."""
+    ev.rationale = _truncate_text(ev.rationale, RATIONALE_TRUNCATE)
+    ev.task = _truncate_text(ev.task, RATIONALE_TRUNCATE)
+
+
+def _truncate_summary(summary: "SummaryOut | None") -> None:
+    """In-place truncation of an LLM-generated SummaryOut. The synthesis is
+    server-LLM mediated text built from user-supplied rationales — it may
+    have absorbed injected content into a paragraph the agent treats as
+    authoritative. Caps synthesis at a paragraph budget and highlights at
+    the same RATIONALE_TRUNCATE as a single event bullet."""
+    if summary is None:
+        return
+    summary.synthesis = _truncate_text(summary.synthesis, 1000) or ""
+    for hl in summary.highlights:
+        hl.text = _truncate_text(hl.text, RATIONALE_TRUNCATE) or ""
 
 
 # ---- Tools ----
@@ -551,7 +598,15 @@ async def score(
         if top_capability_tags is not None:
             params["top_capability_tags"] = top_capability_tags
         data = await _request(ctx, "GET", "/v1/profile", params=params)
-        return EntityProfile.model_validate(data)
+        profile = EntityProfile.model_validate(data)
+        # Cap free-text on every surface the profile carries back to the
+        # agent: server-LLM-mediated summary content (may have absorbed
+        # injected rationale) and per-event task/rationale on pooled_events.
+        _truncate_summary(profile.summary)
+        if profile.pooled_events:
+            for ev in profile.pooled_events:
+                _truncate_event(ev)
+        return profile
 
 
 @mcp.tool()
@@ -618,8 +673,7 @@ async def retrieve(
     data = await _request(ctx, "POST", "/v1/retrieve", json=body)
     result = RetrieveResult.model_validate(data)
     for event in result.events:
-        if event.rationale and len(event.rationale) > RATIONALE_TRUNCATE:
-            event.rationale = event.rationale[:RATIONALE_TRUNCATE - 3] + "..."
+        _truncate_event(event)
     return result
 
 
@@ -734,7 +788,12 @@ async def discover(
         raise RuntimeError("ctx must be injected by FastMCP")
     body = {"query": query, "k": k, "inner_pool": inner_pool}
     data = await _request(ctx, "POST", "/v1/discover", json=body)
-    return DiscoverResult.model_validate(data)
+    result = DiscoverResult.model_validate(data)
+    # Each hit's best_event.rationale + task are reviewer-supplied free text
+    # surfaced verbatim to the agent — cap to RATIONALE_TRUNCATE like retrieve.
+    for hit in result.results:
+        _truncate_event(hit.best_event)
+    return result
 
 
 @mcp.tool()
