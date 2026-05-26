@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Annotated, Literal  # noqa: E402
+from typing import Annotated, Any, Literal  # noqa: E402
 
 import httpx  # noqa: E402
 from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
@@ -74,19 +74,17 @@ RESERVED_ID_PREFIXES: tuple[str, ...] = (
 
 
 # ---- Response models ----
-# Shapes verified against the live PoC API at Phase 1 implementation time;
-# they diverged from the Appendix A sketches in MCP-PLAN.md rev 5 in three
-# specific ways:
-#   - /v1/profile composite_score is {value, confidence, last_updated} (a
-#     ScalarAggregate), not a flat float — so /v1/score and /v1/profile have
-#     genuinely different shapes and don't share one model.
+# Shapes verified against the live PoC API. Notable quirks the OpenAPI doesn't
+# spell out:
+#   - /v1/score returns flat composite_score (float); /v1/profile returns
+#     composite_score as a ScalarAggregate ({value, confidence, last_updated}).
+#     They are genuinely different shapes — we keep separate models.
 #   - /v1/capabilities response field is `tags`, not `capabilities`.
-#   - /v1/retrieve aggregates use `top_failure_modes` (matching /v1/profile),
-#     not `failure_modes`; n_events_total isn't always present.
+#   - Both /v1/profile.top_failure_modes and /v1/retrieve.aggregates.top_failure_modes
+#     use `{tag, count}` (FailureModeCount). The legacy `{tag, n_events}` shape is gone.
 #
-# Datetime fields stay as `str | None` (no datetime parsing) so Pydantic
-# never rejects a server timestamp format. `extra="allow"` tolerates
-# server-side additions (e.g., diagnostics, displayed_context, context_chips).
+# Datetime fields stay as `str` (no datetime parsing) so Pydantic never rejects
+# a server timestamp format. `extra="allow"` tolerates forward-compatible additions.
 
 class ScalarAggregate(BaseModel):
     """Used for composite_score and per-dimension entries in /v1/profile
@@ -97,71 +95,112 @@ class ScalarAggregate(BaseModel):
     last_updated: str | None = None
 
 
-class FailureModeRow(BaseModel):
-    """/v1/profile.top_failure_modes shape — field is `n_events`."""
-    model_config = ConfigDict(extra="allow")
-    tag: str
-    n_events: int
-
-
 class FailureModeCount(BaseModel):
-    """/v1/retrieve.aggregates.top_failure_modes shape — field is `count`,
-    NOT `n_events` (server API quirk; the two endpoints use different names
-    for the same concept)."""
+    """Shape for top_failure_modes on both /v1/profile and /v1/retrieve."""
     model_config = ConfigDict(extra="allow")
     tag: str
     count: int
 
 
 class CapabilityTagRow(BaseModel):
+    """Per-entity capability traffic — used in /v1/profile.top_capability_tags."""
     model_config = ConfigDict(extra="allow")
     tag: str
     n_events: int
+    last_seen: str | None = None
+
+
+class HighlightOut(BaseModel):
+    """One bullet in an LLM-generated entity summary. event_ids are real
+    UUIDs retrievable via POST /v1/retrieve on the same entity."""
+    model_config = ConfigDict(extra="allow")
+    text: str
+    event_ids: list[str]
+
+
+class SummaryOut(BaseModel):
+    """LLM-generated narrative attached to /v1/profile. `null` on profile
+    when entity has < 3 events, the summary worker is disabled, or the
+    summary hasn't been generated yet."""
+    model_config = ConfigDict(extra="allow")
+    synthesis: str
+    highlights: list[HighlightOut]
+    n_events_at_generation: int
+    n_reviewers_at_generation: int
+    model: str
+    prompt_version: int
+    generated_at: str
+
+
+class ContextChip(BaseModel):
+    """One context the entity has events in — populated in /v1/profile
+    when the caller does not pin a context."""
+    model_config = ConfigDict(extra="allow")
+    context: str
+    n_events: int
+    composite: float
+    confidence: float
+
+
+class Event(BaseModel):
+    """EventSnippet shape returned by /v1/retrieve, /v1/profile.pooled_events,
+    and /v1/rank.supporting_event."""
+    model_config = ConfigDict(extra="allow")
+    event_id: str
+    observed_at: str
+    context: str
+    reviewer_external_id: str
+    reviewer_type: str
+    score: float
+    task: str | None = None
+    task_tags: list[str] = []
+    dimensions: dict[str, float] = {}
+    failure_modes: list[str] = []
+    metrics: dict[str, float] = {}
+    rationale: str | None = None  # truncated to 200 chars in retrieve responses
+    similarity: float | None = None
+    weight: float | None = None  # not part of EventSnippet, kept for forward compat
 
 
 class ScoreSummary(BaseModel):
-    """Response from `/v1/score`: flat composite/confidence/last_updated."""
+    """Response from `/v1/score`: flat composite/confidence/last_updated
+    plus scorer-specific diagnostics (for beta_decay: alpha, beta, n_eff, mu)."""
     model_config = ConfigDict(extra="allow")
     composite_score: float
     confidence: float
     last_updated: str | None = None
+    diagnostics: dict[str, Any] = {}
 
 
 class EntityProfile(BaseModel):
     """Response from `/v1/profile`: nested aggregates per dimension, plus
-    failure-mode + capability-tag top-lists and event-count metadata."""
+    failure-mode + capability-tag top-lists and event-count metadata. The
+    `summary` field is the LLM-generated narrative — `null` when the entity
+    has < 3 events or the summary worker hasn't caught up. `context_chips`
+    and `pooled_events` are populated only when the caller pools across
+    contexts (no `context` query parameter)."""
     model_config = ConfigDict(extra="allow")
     entity: dict[str, str]
     known: bool
     composite_score: ScalarAggregate
     dimensions: dict[str, ScalarAggregate]
-    top_failure_modes: list[FailureModeRow]
+    top_failure_modes: list[FailureModeCount]
     top_capability_tags: list[CapabilityTagRow]
     n_events_total: int
     n_distinct_reviewers: int | None = None
     first_observed_at: str | None = None
     last_observed_at: str | None = None
-
-
-class Event(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    score: float
-    weight: float | None = None  # not always present in /v1/rank supporting_event
-    task: str | None = None
-    rationale: str | None = None  # truncated to 200 chars in retrieve responses
-    dimensions: dict[str, float] | None = None
-    failure_modes: list[str] | None = None
-    metrics: dict[str, float] | None = None
-    task_tags: list[str] | None = None
-    observed_at: str | None = None
-    similarity: float | None = None
+    displayed_context: str | None = None
+    summary: SummaryOut | None = None
+    context_chips: list[ContextChip] | None = None
+    pooled_events: list[Event] | None = None
 
 
 class RetrieveAggregates(BaseModel):
     model_config = ConfigDict(extra="allow")
     composite_score: ScalarAggregate
     dimensions: dict[str, ScalarAggregate]
-    top_failure_modes: list[FailureModeCount] = []  # NOTE: `count`, not `n_events`
+    top_failure_modes: list[FailureModeCount] = []
 
 
 class RetrieveResult(BaseModel):
