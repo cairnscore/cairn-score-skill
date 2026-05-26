@@ -448,6 +448,10 @@ async def score(
     type: Literal["data_source", "capability"],
     external_id: Annotated[str, Field(min_length=1)],
     detail: Literal["summary", "full"] = "summary",
+    context: str | None = None,
+    scorer: str | None = None,
+    top_failure_modes: Annotated[int | None, Field(ge=1, le=50)] = None,
+    top_capability_tags: Annotated[int | None, Field(ge=1, le=50)] = None,
     ctx: Context[ServerSession, AppContext] | None = None,
 ) -> ScoreSummary | EntityProfile:
     """Check the trust score of a URL or capability before consuming/invoking it.
@@ -465,7 +469,14 @@ async def score(
 
     `confidence=0.0` means "no signal yet" — proceed and rate afterward.
     Pass `detail="full"` for the combined profile (dimensions + top
-    failure modes + top capability tags + event counts).
+    failure modes + top capability tags + event counts). When `detail="full"`
+    and the entity has accumulated enough events, the profile also carries
+    an LLM-generated `summary` field — relay it to the user verbatim
+    instead of re-synthesising from events.
+
+    Optional `context` pins the scoring domain (e.g. "factual-accuracy").
+    Omit to use the dominant context. `scorer` selects a non-default
+    scorer for `detail="summary"` shadow-execution comparisons.
 
     Example: user pastes `https://random-blog.example/post/123` and asks
     you to summarize — call `score` BEFORE fetching.
@@ -473,12 +484,22 @@ async def score(
     if ctx is None:  # pragma: no cover — FastMCP always injects
         raise RuntimeError("ctx must be injected by FastMCP")
     if detail == "summary":
-        data = await _request(ctx, "GET", "/v1/score",
-                              params={"type": type, "external_id": external_id})
+        params: dict = {"type": type, "external_id": external_id}
+        if context is not None:
+            params["context"] = context
+        if scorer is not None:
+            params["scorer"] = scorer
+        data = await _request(ctx, "GET", "/v1/score", params=params)
         return ScoreSummary.model_validate(data)
     else:
-        data = await _request(ctx, "GET", "/v1/profile",
-                              params={"type": type, "external_id": external_id})
+        params = {"type": type, "external_id": external_id}
+        if context is not None:
+            params["context"] = context
+        if top_failure_modes is not None:
+            params["top_failure_modes"] = top_failure_modes
+        if top_capability_tags is not None:
+            params["top_capability_tags"] = top_capability_tags
+        data = await _request(ctx, "GET", "/v1/profile", params=params)
         return EntityProfile.model_validate(data)
 
 
@@ -488,6 +509,7 @@ async def retrieve(
     external_id: Annotated[str, Field(min_length=1)],
     query: str | None = None,
     k: Annotated[int, Field(ge=1, le=100)] = 5,
+    context: str | None = None,
     dimensions_present: list[DimensionName] | None = None,
     failure_modes_any: list[str] | None = None,
     task_tags: list[str] | None = None,
@@ -526,6 +548,8 @@ async def retrieve(
         "k": k,
         "include_aggregates": include_aggregates,
     }
+    if context is not None:
+        body["context"] = context
     if query:
         body["query"] = query
     filters: dict = {}
@@ -555,6 +579,10 @@ async def rank(
     k: Annotated[int, Field(ge=1, le=100)] = 5,
     min_events: Annotated[int, Field(ge=1)] = 3,
     include_supporting_event: bool = False,
+    context: str | None = None,
+    min_confidence: Annotated[float | None, Field(ge=0, le=1)] = None,
+    min_score: Annotated[float | None, Field(ge=0, le=1)] = None,
+    limit_candidates: Annotated[int | None, Field(ge=1, le=1000)] = None,
     ctx: Context[ServerSession, AppContext] | None = None,
 ) -> RankResult:
     """Rank entities by a capability tag on a chosen dimension — the "who's the [adj]?" lens.
@@ -577,13 +605,21 @@ async def rank(
     """
     if ctx is None:  # pragma: no cover
         raise RuntimeError("ctx must be injected by FastMCP")
-    body = {
+    body: dict = {
         "capability_tag": capability_tag,
         "rank_by": rank_by,
         "k": k,
         "min_events": min_events,
         "include_supporting_event": include_supporting_event,
     }
+    if context is not None:
+        body["context"] = context
+    if min_confidence is not None:
+        body["min_confidence"] = min_confidence
+    if min_score is not None:
+        body["min_score"] = min_score
+    if limit_candidates is not None:
+        body["limit_candidates"] = limit_candidates
     data = await _request(ctx, "POST", "/v1/rank", json=body)
     return RankResult.model_validate(data)
 
@@ -679,6 +715,8 @@ async def rate(
     failure_modes: Annotated[list[str] | None, Field(max_length=10)] = None,
     metrics: dict[str, float] | None = None,
     task_tags: Annotated[list[str] | None, Field(max_length=10)] = None,
+    context: str | None = None,
+    observed_at: str | None = None,
     ctx: Context[ServerSession, AppContext] | None = None,
 ) -> RateResult:
     """Submit one rating for a URL/REST endpoint (`type="data_source"`) or MCP server/tool (`type="capability"`) you just consumed/invoked.
@@ -743,6 +781,10 @@ async def rate(
         "score": score,
         "weight": weight,
     }
+    if context is not None:
+        body["context"] = context
+    if observed_at is not None:
+        body["observed_at"] = observed_at
     if task:
         body["task"] = task
     if rationale:
