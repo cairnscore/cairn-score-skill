@@ -15,7 +15,8 @@
 #                                               #   known revoked.
 #
 # Env:
-#   TRUSTGRAPH_KEY_FILE   default: $HOME/.trustgraph/api-key
+#   TRUSTGRAPH_KEY_FILE   default: $HOME/.trustgraph/keys/<host>.key
+#                         (URL-scoped — derived from TRUSTGRAPH_BASE_URL's host)
 #   TRUSTGRAPH_BASE_URL   default: https://mep39camvm.us-east-1.awsapprunner.com
 #
 # What it does:

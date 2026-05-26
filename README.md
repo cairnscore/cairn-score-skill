@@ -88,7 +88,7 @@ The paired skill at `dist/trustgraph-skill.zip` (rebuilt from `skill/SKILL.md` +
 
 **Length constraint to know about if you fork:** claude.ai enforces `description ≤ 1024 chars` on the SKILL.md frontmatter. The current description is ~870 chars (154 chars of headroom). If you edit it and the upload errors with `field 'description' in SKILL.md must be at most 1024 characters`, that's the cause — trim and rebuild the zip (`cd skill && zip -r ../dist/trustgraph-skill.zip SKILL.md references/*.md`).
 
-The MCP shares `~/.trustgraph/api-key` with the Code skill via the refactored `mint-key.sh`, which owns read-or-mint-and-persist under `fcntl.flock`. First surface to mint owns the reviewer identity baked into the key; both surfaces accumulate ratings under that identity.
+The MCP shares the URL-scoped key file (`~/.trustgraph/keys/<host>.key`, default `<host>` = `mep39camvm.us-east-1.awsapprunner.com`) with the Code skill via `mint-key.sh`, which owns read-or-mint-and-persist under `fcntl.flock`. First surface to mint owns the reviewer identity baked into the key; both surfaces accumulate ratings under that identity.
 
 ### Tools
 
@@ -225,7 +225,7 @@ Repo layout:
 | `TRUSTGRAPH_MINT_SCRIPT` | (clone-relative `<server.py-dir>/../skill/scripts/mint-key.sh`) | Path to the read-or-mint-and-persist script the MCP shells out to |
 | `TRUSTGRAPH_DEBUG_LOG` | (unset → no log) | When set, append-only JSONL side log (mode 0o600) with one line per HTTP call from server.py + per chunk POST from tg-flush. Use when debugging "why isn't this working". |
 | `TRUSTGRAPH_QUEUE` | `~/.trustgraph/queue.jsonl` | Override the queue file location |
-| `TRUSTGRAPH_KEY_FILE` | `~/.trustgraph/api-key` | Override the persisted key location |
+| `TRUSTGRAPH_KEY_FILE` | (derived: `~/.trustgraph/keys/<host>.key` per the deployment URL) | Override the persisted key location |
 | `TRUSTGRAPH_NESTED` | (unset) | Recursion guard. If `=1`, hooks bail out silently. Set automatically by `claude-cli` backend on its child process. |
 
 ## Disable / uninstall

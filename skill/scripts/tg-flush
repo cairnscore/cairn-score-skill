@@ -10,7 +10,8 @@
 #
 # Usage: scripts/tg-flush
 #
-# Requires TRUSTGRAPH_API_KEY (auto-minted into ~/.trustgraph/api-key on first run).
+# Requires TRUSTGRAPH_API_KEY (auto-minted into ~/.trustgraph/keys/<host>.key
+# on first run via mint-key.sh, which URL-scopes by default).
 
 set -euo pipefail
 command -v python3 >/dev/null || { echo "tg-flush: python3 required" >&2; exit 127; }
@@ -21,7 +22,9 @@ command -v python3 >/dev/null || { echo "tg-flush: python3 required" >&2; exit 1
 
 : "${TRUSTGRAPH_BASE_URL:=https://mep39camvm.us-east-1.awsapprunner.com}"
 : "${TRUSTGRAPH_QUEUE:=$HOME/.trustgraph/queue.jsonl}"
-: "${TRUSTGRAPH_KEY_FILE:=$HOME/.trustgraph/api-key}"
+# Don't default TRUSTGRAPH_KEY_FILE here — mint-key.sh has its own URL-scoped
+# default (~/.trustgraph/keys/<host>.key). Setting a legacy default here
+# would override mint-key.sh's derivation via the exported env below.
 
 # Resolve TRUSTGRAPH_API_KEY via mint-key.sh, which owns the read-or-mint-and-
 # persist critical section under fcntl.flock on ${TRUSTGRAPH_KEY_FILE}.lock.
