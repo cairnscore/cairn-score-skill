@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Salvage and validate one rater-produced /v1/scores rating before it queues.
+
+Reads a single rating object as JSON on stdin. Small rater models sometimes
+drift out of structured output and hand-write a tool call as text; the CLI's
+structured-output extraction then over-captures, leaking a stray closing tag
+and the next `<parameter name=...>` block into a free-text field (most often
+`rationale`). See cs-judge-and-rate.
+
+This guard sits between the rater backends and cs-rate:
+  - truncates `rationale` / `task` at the first tool-call / XML tag fragment,
+    keeping the genuine leading prose;
+  - validates the salvaged result is structurally sane;
+  - on success: writes the cleaned compact JSON to stdout (exit 0);
+  - on an unsalvageable / invalid rating: writes a diagnostic to stderr and
+    exits non-zero with nothing on stdout, so cs-rate queues nothing.
+
+Only the rater path pipes through this; the manual Workflow-2 path keeps
+cs-rate's lenient contract untouched.
+"""
+
+import json
+import re
+import sys
+
+# Markers that only appear when a model emits a tool call / XML as text:
+#   - any closing tag, e.g. </rationale> or its corruption </anionale>
+#   - a tool-call parameter block <parameter name="...">
+#   - <invoke ...> / </invoke> and <function_calls> / </function_calls>
+# A bare "<" (e.g. "latency < 3s") is deliberately NOT a marker.
+FRAGMENT_RE = re.compile(r"</[A-Za-z][\w.-]*>|<parameter\b|</?invoke\b|</?function_calls\b")
+
+VALID_TYPES = {"data_source", "capability", "agent"}
+MAX_RATIONALE = 2000
+MAX_TASK = 500
+
+
+def fail(msg: str) -> None:
+    print(f"cs-sanitize-rating: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def is_number(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def salvage(text: str) -> str:
+    """Truncate at the first tag fragment, then trim trailing whitespace."""
+    m = FRAGMENT_RE.search(text)
+    if m:
+        text = text[: m.start()]
+    return text.rstrip()
+
+
+def salvage_field(obj: dict, key: str, max_len: int) -> None:
+    if key not in obj:
+        return
+    val = obj[key]
+    if not isinstance(val, str):
+        fail(f"{key} must be a string")
+    cleaned = salvage(val)[:max_len]
+    if FRAGMENT_RE.search(cleaned):
+        fail(f"{key} still contains tag fragments after salvage")
+    if cleaned:
+        obj[key] = cleaned
+    else:
+        del obj[key]
+
+
+def main() -> None:
+    raw = sys.stdin.read()
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON on stdin: {e}")
+    if not isinstance(obj, dict):
+        fail("stdin must be a JSON object")
+
+    reviewee = obj.get("reviewee")
+    if not isinstance(reviewee, dict):
+        fail("missing or malformed 'reviewee'")
+    if reviewee.get("type") not in VALID_TYPES:
+        fail(f"reviewee.type must be one of {sorted(VALID_TYPES)}")
+    if not isinstance(reviewee.get("external_id"), str) or not reviewee["external_id"]:
+        fail("reviewee.external_id must be a non-empty string")
+
+    score = obj.get("score")
+    if not is_number(score) or not (0.0 <= score <= 1.0):
+        fail("score must be a number in [0, 1]")
+
+    if "weight" in obj:
+        w = obj["weight"]
+        if not is_number(w) or not (0.0 < w <= 1.0):
+            fail("weight must be a number in (0, 1]")
+
+    if "dimensions" in obj:
+        dims = obj["dimensions"]
+        if not isinstance(dims, dict) or not all(
+            isinstance(k, str) and is_number(v) and 0.0 <= v <= 1.0
+            for k, v in dims.items()
+        ):
+            fail("dimensions must be a flat map of name -> number in [0, 1]")
+
+    salvage_field(obj, "rationale", MAX_RATIONALE)
+    salvage_field(obj, "task", MAX_TASK)
+
+    print(json.dumps(obj, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()
