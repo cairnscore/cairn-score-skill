@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Submit qualitative product feedback about Cairn ITSELF — a feature idea, a
+# bug you hit, or a suggestion for the API. This is NOT a trust rating; use
+# cs-rate / cs-flush to rate the sources and capabilities you interact with.
+#
+# Usage:
+#   scripts/cs-feedback "free-text message"           # category defaults to unset
+#   scripts/cs-feedback bug   "the batch endpoint 422s when..."
+#   scripts/cs-feedback idea  "would love a /v1/... endpoint that..."
+#   echo "message" | scripts/cs-feedback [category]   # message on stdin
+#
+# category (optional) is one of: idea | bug | praise | other.
+#   If the first arg is one of those words it's treated as the category and the
+#   remaining args (or stdin) are the message. Otherwise all args are the message.
+#
+# POSTs to /v1/feedback (returns 202 accepted). Reviewer identity is implicit
+# from CAIRN_API_KEY; rate-limited by the same per-key bucket as writes. There
+# is no read API — submissions are reviewed operator-side. Silent on success.
+#
+# Requires CAIRN_API_KEY (auto-minted via mint-key.sh if missing, same as cs-flush).
+
+set -euo pipefail
+command -v python3 >/dev/null || { echo "cs-feedback: python3 required" >&2; exit 127; }
+
+: "${CAIRN_BASE_URL:=https://api.cairnscore.ai}"
+
+# Separate an optional leading category from the message.
+CATEGORY=""
+case "${1:-}" in
+  idea|bug|praise|other)
+    CATEGORY="$1"
+    shift
+    ;;
+esac
+
+if [[ $# -gt 0 ]]; then
+  MESSAGE="$*"
+else
+  MESSAGE="$(cat)"
+fi
+
+# Trim leading/trailing whitespace; bail early on an empty message so we don't
+# spend an API call (and a rate-limit token) on a 422.
+MESSAGE="${MESSAGE#"${MESSAGE%%[![:space:]]*}"}"
+MESSAGE="${MESSAGE%"${MESSAGE##*[![:space:]]}"}"
+[[ -n "$MESSAGE" ]] || { echo "cs-feedback: empty message; nothing submitted" >&2; exit 2; }
+
+# Resolve CAIRN_API_KEY via mint-key.sh (owns the read-or-mint critical section
+# under flock). Same pattern and env contract as cs-flush.
+if [[ -z "${CAIRN_API_KEY:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  export CAIRN_KEY_FILE CAIRN_BASE_URL
+  CAIRN_API_KEY=$(bash "$SCRIPT_DIR/mint-key.sh") || {
+    echo "cs-feedback: mint-key.sh failed; feedback NOT submitted" >&2
+    exit 1
+  }
+fi
+
+BODY=$(CATEGORY="$CATEGORY" MESSAGE="$MESSAGE" python3 -c '
+import os, json
+body = {"message": os.environ["MESSAGE"]}
+cat = os.environ.get("CATEGORY") or ""
+if cat:
+    body["category"] = cat
+print(json.dumps(body))
+')
+
+CAIRN_BASE_URL="$CAIRN_BASE_URL" \
+CAIRN_API_KEY="$CAIRN_API_KEY" \
+BODY="$BODY" \
+python3 <<'PY'
+import os, sys, json, urllib.request, urllib.error
+
+base = os.environ["CAIRN_BASE_URL"]
+key = os.environ["CAIRN_API_KEY"]
+payload = os.environ["BODY"].encode()
+
+req = urllib.request.Request(
+    f"{base}/v1/feedback",
+    data=payload,
+    headers={"X-Api-Key": key, "Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read()
+        if body:
+            data = json.loads(body)
+            if isinstance(data, dict) and "error" in data:
+                sys.exit("cs-feedback: " + json.dumps(data["error"]))
+        # 202 accepted — silent on success.
+except urllib.error.HTTPError as e:
+    body_str = e.read().decode(errors="replace")
+    sys.exit(f"cs-feedback: HTTP {e.code}: {body_str}")
+except urllib.error.URLError as e:
+    sys.exit(f"cs-feedback: network error: {e.reason}")
+PY
