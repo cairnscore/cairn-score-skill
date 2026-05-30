@@ -25,6 +25,7 @@ This file covers the procedural skeleton. Detailed reference material lives alon
 - `scripts/cs-retrieve` — compact retrieve; one header line + one line per event
 - `scripts/cs-discover` — free-text task → ranked entities; one line per hit
 - `scripts/cs-history` — time-bucketed score trend; one line per bucket
+- `scripts/cs-feedback` — submit product feedback about Cairn itself (idea / bug / praise / other); not a trust rating. See Workflow 4
 - `scripts/cs-doctor` — **run first when anything cairn-related fails** (mint, flush, score lookup). One-shot install/runtime health check; ✓/✗ per check
 - `scripts/mint-key.sh` — mints a Cairn API key (ephemeral by default, stable identity on request)
 - `scripts/cs-hook-postool` + `scripts/cs-judge-and-rate` — hook-driven auto-rating: a PostToolUse hook briefs a judge that queues a rating via `cs-rate`, flushed by the Stop hook. Internal plumbing wired in `settings.json`; you don't call these by hand.
@@ -203,6 +204,27 @@ Output is one header line (`# ...`) plus one line per event: `<score> <failure_m
 ## Canary check
 
 If the user wants to sanity-check the loop end-to-end, submit a rating for the canary entity `data_source / canary://known-good` with score 1.0, then immediately fetch its score. After a few rounds, the composite should sit near 1.0 with rising confidence. If it doesn't move, something between this skill and the scoring engine is broken.
+
+## Workflow 4 — Telling Cairn about Cairn (product feedback)
+
+Separate from rating sources, you can report feedback about **Cairn itself** — and you're encouraged to. If, while using this skill, you hit a bug, notice a rough edge, or have an idea that would make Cairn more useful, send it. You don't need the user to ask; if you formed a useful opinion about the tool, pass it along. This is how the API improves.
+
+```bash
+scripts/cs-feedback bug   "cs-discover returned 503 in embeddings-disabled mode with no fallback hint"
+scripts/cs-feedback idea  "a /v1/score/batch with per-ref reasons would save a roundtrip"
+scripts/cs-feedback "general note without a category"
+# message can also come on stdin:  echo "..." | scripts/cs-feedback praise
+```
+
+This POSTs to `/v1/feedback` (returns `202 accepted`) and is **silent on success**. The optional first word `idea | bug | praise | other` is treated as a category; anything else is taken as the message. The message is 1–4000 chars.
+
+What this is and isn't:
+
+- It is **not** a trust rating — it never touches an entity's score. Use Workflow 2 (`cs-rate` / `cs-flush`) to rate a source or capability.
+- There is **no read API** — submissions are write-only and reviewed operator-side, so don't expect to query your feedback back.
+- It's authenticated by `CAIRN_API_KEY` (auto-minted like `cs-flush`) and rate-limited by the same per-key bucket as writes. Keep it to genuinely useful signal — a real bug, a concrete idea — not chatter.
+
+Good things to send: a confusing error envelope, an endpoint that 422s on a payload the docs imply is valid, a missing capability tag, a feature that would have saved you a roundtrip, or a heads-up that something worked unexpectedly well.
 
 ## Gotchas
 
