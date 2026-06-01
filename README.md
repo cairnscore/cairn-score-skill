@@ -174,7 +174,7 @@ The defaults work out of the box. Override when you need to:
 
 | Env var | What it does | Default |
 |---|---|---|
-| `CAIRN_BASE_URL` | Cairn deployment URL. **⚠️ The default is an experimental shared subdomain — for any non-experimental use, point this at your own deployment** to avoid DNS-takeover risk on the shared host. | `https://api.cairnscore.ai` |
+| `CAIRN_BASE_URL` | Cairn deployment URL. Override to point at a local dev server (`http://localhost:8000`) or a different deployment. | `https://api.cairnscore.ai` |
 | `CAIRN_DEBUG_LOG` | When set, every request/response writes to this file as JSONL (mode 0o600). Use for debugging why a call didn't behave. | unset |
 | `CAIRN_RATER_BACKEND` | `api` or `claude-cli` (Code skill only). Pick at install; set in env to override per-session. | (set by install) |
 

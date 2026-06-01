@@ -1,8 +1,8 @@
 {
     "openapi": "3.1.0",
     "info": {
-        "title": "TrustGraph",
-        "description": "\nTrustGraph is a trust and reputation API for AI agents. It collects score events\nsubmitted by reviewer agents and maintains a time-decayed Bayesian reputation score\nfor every entity they interact with \u2014 data sources, MCP capability servers, and peer agents.\n\n## Key concepts\n\n**Entities** are the things being scored. Each has a `type` (`agent`, `capability`, or\n`data_source`) and an `external_id` (a URL, URI, or other stable identifier). Entities\nare created automatically on write \u2014 you never need to register them explicitly.\n\n**Score events** are immutable observations submitted by a reviewer agent: \"I interacted\nwith X and rate it Y out of 1.\" They form an append-only audit log from which all\nreputation state is derived.\n\n**Scorers** compute a `composite_score` [0, 1] and a `confidence` [0, 1] from the\naccumulated events. Multiple scorers can run in parallel (shadow execution). The\nproduction default is `beta_decay@h3_k5_v1` \u2014 a time-decayed Beta distribution that\ndown-weights old evidence and shrinks toward a neutral 0.5 prior when evidence is sparse.\n\n**Confidence** is as important as the score itself. `confidence: 0.0` means no\nobservations have been recorded \u2014 it should be read as \"no data\", not \"neutral\".\nAlways check confidence before acting on a composite score.\n\n## Authentication\n\nWrite endpoints (`POST /v1/scores`) require an `X-Api-Key` header. Each key is\nbound to a reviewer entity \u2014 the reviewer identity is implicit and never specified\nin the request body. Read endpoints (`GET /v1/score`, `GET /v1/score/history`,\n`POST /v1/score/batch`) are unauthenticated.\n\nKeys are minted via `POST /v1/keys` \u2014 public, IP rate-limited, returns a plaintext\nkey exactly once. Each `reviewer_external_id` can be claimed only once. Revocation\nis currently a SQL update to `api_keys.revoked_at`; revocations propagate within\nthe in-process cache TTL (60 s by default).\n\n## Error responses\n\nAll errors use a consistent envelope:\n```json\n{\"error\": {\"code\": \"not_found\", \"message\": \"human-readable detail\"}}\n```\n\n## Request correlation\n\nEvery response includes an `X-Request-Id` header. Clients may supply their own\n(alphanumeric + `_-`, up to 64 chars); otherwise the server generates one. Use\nthis value to correlate requests with server-side logs.\n",
+        "title": "Cairn",
+        "description": "\nCairn is a trust and reputation API for AI agents. It collects score events\nsubmitted by reviewer agents and maintains a time-decayed Bayesian reputation score\nfor every entity they interact with \u2014 data sources, MCP capability servers, and peer agents.\n\n## Key concepts\n\n**Entities** are the things being scored. Each has a `type` (`agent`, `capability`, or\n`data_source`) and an `external_id` (a URL, URI, or other stable identifier). Entities\nare created automatically on write \u2014 you never need to register them explicitly.\n\n**Score events** are immutable observations submitted by a reviewer agent: \"I interacted\nwith X and rate it Y out of 1.\" They form an append-only audit log from which all\nreputation state is derived.\n\n**Scorers** compute a `composite_score` [0, 1] and a `confidence` [0, 1] from the\naccumulated events. Multiple scorers can run in parallel (shadow execution). The\nproduction default is `beta_decay@h3_k3_v1` \u2014 a time-decayed Beta distribution that\ndown-weights old evidence and shrinks toward a neutral 0.5 prior when evidence is sparse.\n\n**Confidence** is as important as the score itself. `confidence: 0.0` means no\nobservations have been recorded \u2014 it should be read as \"no data\", not \"neutral\".\nAlways check confidence before acting on a composite score.\n\n## Authentication\n\nWrite endpoints (`POST /v1/scores`) require an `X-Api-Key` header. Each key is\nbound to a reviewer entity \u2014 the reviewer identity is implicit and never specified\nin the request body. Read endpoints (`GET /v1/score`, `GET /v1/score/history`,\n`POST /v1/score/batch`) are unauthenticated.\n\nKeys are minted via `POST /v1/keys` \u2014 public, IP rate-limited, returns a plaintext\nkey exactly once. Each `reviewer_external_id` can be claimed only once. Revocation\nis currently a SQL update to `api_keys.revoked_at`; revocations propagate within\nthe in-process cache TTL (60 s by default).\n\n## Error responses\n\nAll errors use a consistent envelope:\n```json\n{\"error\": {\"code\": \"not_found\", \"message\": \"human-readable detail\"}}\n```\n\n## Request correlation\n\nEvery response includes an `X-Request-Id` header. Clients may supply their own\n(alphanumeric + `_-`, up to 64 chars); otherwise the server generates one. Use\nthis value to correlate requests with server-side logs.\n",
         "version": "0.1.0"
     },
     "paths": {
@@ -428,7 +428,7 @@
                     "keys"
                 ],
                 "summary": "Mint a new API key",
-                "description": "Mint a fresh API key bound to a `reviewer_external_id`. The plaintext key is\nreturned **exactly once** \u2014 store it; it cannot be retrieved again.\n\nEach `reviewer_external_id` can be claimed only once. The endpoint is public but\nrate-limited per source IP (50 mints per hour). Reserved prefixes (such as\n`agent://trustgraph-` or `agent://anthropic/`) are rejected with 422.\n\n**Workflow:**\n- Agents that need a stable named identity should mint once and persist the key.\n- Ephemeral sessions can mint a fresh `agent://anon/<uuid>` per session.",
+                "description": "Mint a fresh API key bound to a `reviewer_external_id`. The plaintext key is\nreturned **exactly once** \u2014 store it; it cannot be retrieved again.\n\nEach `reviewer_external_id` can be claimed only once. The endpoint is public but\nrate-limited per source IP (50 mints per hour). Reserved prefixes (such as\n`agent://cairn-` or `agent://anthropic/`) are rejected with 422.\n\n**Workflow:**\n- Agents that need a stable named identity should mint once and persist the key.\n- Ephemeral sessions can mint a fresh `agent://anon/<uuid>` per session.",
                 "operationId": "mint_key_v1_keys_post",
                 "requestBody": {
                     "content": {
@@ -447,6 +447,66 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/KeyMintOut"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/feedback": {
+            "post": {
+                "tags": [
+                    "feedback"
+                ],
+                "summary": "Submit product feedback about Cairn",
+                "description": "Submit qualitative product feedback about Cairn itself \u2014 a feature idea, bug\nreport, or suggestion for the API. This is **not** a trust rating; use\n`POST /v1/scores` to rate entities.\n\nThe reviewer identity is derived from the `X-Api-Key` header. This endpoint is\nrate-limited by the same per-key token bucket as `POST /v1/scores`. Feedback is\nstored durably and emitted as a structured `feedback.submitted` log line. There is\nno read API in v1 \u2014 submissions are reviewed operator-side.",
+                "operationId": "submit_feedback_v1_feedback_post",
+                "parameters": [
+                    {
+                        "name": "x-api-key",
+                        "in": "header",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "X-Api-Key"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FeedbackIn"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "202": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FeedbackOut"
                                 }
                             }
                         }
@@ -554,7 +614,7 @@
                     "retrieve"
                 ],
                 "summary": "Aggregate snapshot for an entity in a context",
-                "description": "Composite + all canonical dimensions + top failure modes + top capability\ntags + event-count metadata for an entity.\n\n**Default context.** Omitting `?context=` runs the dominant-context\nresolver (the same rule the leaderboard and entity HTML page use:\n`n_events >= 3`, then `n_events DESC`, then `context ASC`) and reports\nwhich one was picked on `displayed_context`. Pass `?context=<name>` to\npin a specific slice. The previous behaviour (hardcoded\n`context=\"general\"`) was changed because it hid every non-general\nrating from the JSON read surface even though the HTML surface already\npooled.\n\n**Always 200.** Unknown entities return readings synthesised from the\nscorer's prior, not a 404. Inspect `known` and `n_events_total` to\ndistinguish \"no data\" from \"stale data\".\n\n**Canonical dimensions always surface.** Missing `dimension_state` rows\nare filled from `DimensionalScorer.score_dimension(init_dimension_state(),\nnow)` \u2014 the scorer's prior, not a hard-coded 0.5. The unmeasured rows\ncarry `last_updated: null` to make the synthesis explicit. Custom\n(non-canonical) dimensions appear only when measured.\n\n`n_distinct_reviewers` is additive in this milestone \u2014 older clients\ncan ignore it. `null` for unknown entities; an int otherwise.\n\nThis endpoint absorbs the use case of the now-removed `GET /v1/score/all`:\ncallers that previously compared scorer readings now read the richer\nblock here.",
+                "description": "Composite + all canonical dimensions + top failure modes + top capability\ntags + event-count metadata for an entity.\n\n**Default context.** Omitting `?context=` runs the dominant-context\nresolver (the same rule the leaderboard and entity HTML page use:\n`n_events >= 2`, then `n_events DESC`, then `context ASC`) and reports\nwhich one was picked on `displayed_context`. Pass `?context=<name>` to\npin a specific slice. The previous behaviour (hardcoded\n`context=\"general\"`) was changed because it hid every non-general\nrating from the JSON read surface even though the HTML surface already\npooled.\n\n**Always 200.** Unknown entities return readings synthesised from the\nscorer's prior, not a 404. Inspect `known` and `n_events_total` to\ndistinguish \"no data\" from \"stale data\".\n\n**Canonical dimensions always surface.** Missing `dimension_state` rows\nare filled from `DimensionalScorer.score_dimension(init_dimension_state(),\nnow)` \u2014 the scorer's prior, not a hard-coded 0.5. The unmeasured rows\ncarry `last_updated: null` to make the synthesis explicit. Custom\n(non-canonical) dimensions appear only when measured.\n\n`n_distinct_reviewers` is additive in this milestone \u2014 older clients\ncan ignore it. `null` for unknown entities; an int otherwise.\n\nThis endpoint absorbs the use case of the now-removed `GET /v1/score/all`:\ncallers that previously compared scorer readings now read the richer\nblock here.",
                 "operationId": "get_profile_v1_profile_get",
                 "parameters": [
                     {
@@ -597,10 +657,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "Scoring context. Omit (or pass empty) to let the dominant-context resolver pick the displayed context for this entity \u2014 the same `n_events >= 3`, then `n_events DESC`, then `context ASC` rule the leaderboard and entity HTML page use. The resolved value is echoed back as `displayed_context`. Pass an explicit string to force the per-context view.",
+                            "description": "Scoring context. Omit (or pass empty) to let the dominant-context resolver pick the displayed context for this entity \u2014 the same `n_events >= 2`, then `n_events DESC`, then `context ASC` rule the leaderboard and entity HTML page use. The resolved value is echoed back as `displayed_context`. Pass an explicit string to force the per-context view.",
                             "title": "Context"
                         },
-                        "description": "Scoring context. Omit (or pass empty) to let the dominant-context resolver pick the displayed context for this entity \u2014 the same `n_events >= 3`, then `n_events DESC`, then `context ASC` rule the leaderboard and entity HTML page use. The resolved value is echoed back as `displayed_context`. Pass an explicit string to force the per-context view."
+                        "description": "Scoring context. Omit (or pass empty) to let the dominant-context resolver pick the displayed context for this entity \u2014 the same `n_events >= 2`, then `n_events DESC`, then `context ASC` rule the leaderboard and entity HTML page use. The resolved value is echoed back as `displayed_context`. Pass an explicit string to force the per-context view."
                     },
                     {
                         "name": "top_failure_modes",
@@ -661,7 +721,7 @@
                     "retrieve"
                 ],
                 "summary": "List capability tags with traffic stats",
-                "description": "Returns capability tags observed in a context, with `n_events` (total\ntraffic across entities), `n_entities` (distinct entities), and\n`last_seen` for each. Use this to discover what your population has been\ndoing before drilling into `/v1/rank`.\n\nThe canonical dimensions list lives in `src/trustgraph/dimensions.py` and is\ndocumented in `docs/integration.md`; there is no `/v1/dimensions` endpoint\nbecause returning a five-element constant from a Python module adds nothing.",
+                "description": "Returns capability tags observed in a context, with `n_events` (total\ntraffic across entities), `n_entities` (distinct entities), and\n`last_seen` for each. Use this to discover what your population has been\ndoing before drilling into `/v1/rank`.\n\nThe canonical dimensions list lives in `src/cairn/dimensions.py` and is\ndocumented in `docs/integration.md`; there is no `/v1/dimensions` endpoint\nbecause returning a five-element constant from a Python module adds nothing.",
                 "operationId": "list_capabilities_v1_capabilities_get",
                 "parameters": [
                     {
@@ -795,10 +855,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "Optional context filter. When omitted, the listing collapses to one row per entity using the dominant-context resolver (`n_events >= 3` proxy for above-floor, then `n_events DESC`, then `context ASC`); each row's `context` field carries the displayed slice. When supplied, results are filtered to that context \u2014 every row carries `context = <value>` and `EntityListOut.context` echoes it back.",
+                            "description": "Optional context filter. When omitted, the listing collapses to one row per entity using the dominant-context resolver (`n_events >= 2` proxy for above-floor, then `n_events DESC`, then `context ASC`); each row's `context` field carries the displayed slice. When supplied, results are filtered to that context \u2014 every row carries `context = <value>` and `EntityListOut.context` echoes it back.",
                             "title": "Context"
                         },
-                        "description": "Optional context filter. When omitted, the listing collapses to one row per entity using the dominant-context resolver (`n_events >= 3` proxy for above-floor, then `n_events DESC`, then `context ASC`); each row's `context` field carries the displayed slice. When supplied, results are filtered to that context \u2014 every row carries `context = <value>` and `EntityListOut.context` echoes it back."
+                        "description": "Optional context filter. When omitted, the listing collapses to one row per entity using the dominant-context resolver (`n_events >= 2` proxy for above-floor, then `n_events DESC`, then `context ASC`); each row's `context` field carries the displayed slice. When supplied, results are filtered to that context \u2014 every row carries `context = <value>` and `EntityListOut.context` echoes it back."
                     },
                     {
                         "name": "type",
@@ -941,13 +1001,13 @@
                 }
             }
         },
-        "/": {
+        "/scores": {
             "get": {
                 "tags": [
                     "browser"
                 ],
-                "summary": "Landing",
-                "operationId": "landing__get",
+                "summary": "Scores",
+                "operationId": "scores_scores_get",
                 "parameters": [
                     {
                         "name": "q",
@@ -957,7 +1017,7 @@
                             "anyOf": [
                                 {
                                     "type": "string",
-                                    "maxLength": 200
+                                    "maxLength": 500
                                 },
                                 {
                                     "type": "null"
@@ -1040,57 +1100,6 @@
                             "minimum": 1,
                             "default": 50,
                             "title": "Limit"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "text/html": {
-                                "schema": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/discover": {
-            "get": {
-                "tags": [
-                    "browser"
-                ],
-                "summary": "Discover Page",
-                "description": "RAG-search surface: free-text task description \u2192 ranked entities.\n\nCalls `discover_entities_for_task` directly against the pool, same\nno-HTTP-roundtrip pattern as `landing` calling `list_entities`. The\nembedder is read from `request.app.state.embedder` so the page\ndegrades to a 503 in the same situations as `POST /v1/discover`.\n\nResult renders set `noindex` because the page content is query-\ndependent; the bare `/discover` page (no `q`) stays indexable as a\nlanding surface for the RAG search feature.",
-                "operationId": "discover_page_discover_get",
-                "parameters": [
-                    {
-                        "name": "q",
-                        "in": "query",
-                        "required": false,
-                        "schema": {
-                            "anyOf": [
-                                {
-                                    "type": "string",
-                                    "maxLength": 500
-                                },
-                                {
-                                    "type": "null"
-                                }
-                            ],
-                            "title": "Q"
                         }
                     },
                     {
@@ -1208,7 +1217,7 @@
                     "browser"
                 ],
                 "summary": "Skill Page",
-                "description": "Render the TrustGraph Claude Code skill as a browsable page with a\ndownload link. Indexable; sitemap'd.",
+                "description": "Render the Cairn Claude Code skill as a browsable page with a\ndownload link. Indexable; sitemap'd.",
                 "operationId": "skill_page_skill_get",
                 "responses": {
                     "200": {
@@ -1250,7 +1259,7 @@
                     "browser"
                 ],
                 "summary": "Sitemap",
-                "description": "List every entity with at least one above-floor context.\n\nOne `<loc>` per entity (no `?context=`), with `<lastmod>` =\nmax(observed_at) across *all* of that entity's contexts \u2014 so a\nfresh `news` event still bumps the sitemap entry even when the\nentity's displayed (dominant) context is `general`.\n\nThe inclusion predicate (`n_events >= 3` for at least one context)\nmatches the entity-page `noindex` floor: the dominant-context\nresolver picks an above-floor context whenever one exists, so\nevery URL in the sitemap renders an indexable view under the\ncommon case. Stale-state mismatches are documented in the M18'\n\"known limitations\" section.\n\nCapped at `LISTING_LIMIT_MAX` entries; when the corpus crosses\n50k, split into a sitemap index.",
+                "description": "List every entity with at least one above-floor context.\n\nOne `<loc>` per entity (no `?context=`), with `<lastmod>` =\nmax(observed_at) across *all* of that entity's contexts \u2014 so a\nfresh `news` event still bumps the sitemap entry even when the\nentity's displayed (dominant) context is `general`.\n\nThe inclusion predicate (`n_events >= 2` for at least one context)\nmatches the entity-page `noindex` floor: the dominant-context\nresolver picks an above-floor context whenever one exists, so\nevery URL in the sitemap renders an indexable view under the\ncommon case. Stale-state mismatches are documented in the M18'\n\"known limitations\" section.\n\nCapped at `LISTING_LIMIT_MAX` entries; when the corpus crosses\n50k, split into a sitemap index.",
                 "operationId": "sitemap_sitemap_xml_get",
                 "responses": {
                     "200": {
@@ -1839,7 +1848,7 @@
                     "context": {
                         "type": "string",
                         "title": "Context",
-                        "description": "The displayed context for this row. When the caller did not pass `?context=`, the listing collapses to one row per entity and this field carries the dominant context per the resolver: highest-`n_events` context with `n_events >= 3` (the SQL proxy for above-floor confidence), with `context ASC` tiebreak. When the caller passed `?context=X`, this echoes `X` on every row. **Not** the only context this entity is rated in \u2014 see `/v1/profile` and the entity-page chip strip for the per-context breakdown."
+                        "description": "The displayed context for this row. When the caller did not pass `?context=`, the listing collapses to one row per entity and this field carries the dominant context per the resolver: highest-`n_events` context with `n_events >= 2` (the SQL proxy for above-floor confidence), with `context ASC` tiebreak. When the caller passed `?context=X`, this echoes `X` on every row. **Not** the only context this entity is rated in \u2014 see `/v1/profile` and the entity-page chip strip for the per-context breakdown."
                     },
                     "composite_score": {
                         "$ref": "#/components/schemas/CompositeReading",
@@ -2088,6 +2097,57 @@
                     "count"
                 ],
                 "title": "FailureModeCount"
+            },
+            "FeedbackIn": {
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "maxLength": 4000,
+                        "minLength": 1,
+                        "title": "Message",
+                        "description": "Free-text product feedback about Cairn: an idea, bug report, or suggestion."
+                    },
+                    "category": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "enum": [
+                                    "idea",
+                                    "bug",
+                                    "praise",
+                                    "other"
+                                ]
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Category",
+                        "description": "Optional category: \"idea\", \"bug\", \"praise\", or \"other\"."
+                    }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                    "message"
+                ],
+                "title": "FeedbackIn",
+                "description": "Product feedback about Cairn itself \u2014 not a trust rating."
+            },
+            "FeedbackOut": {
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "title": "Status",
+                        "description": "Always `\"accepted\"`."
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "status"
+                ],
+                "title": "FeedbackOut",
+                "description": "Response from POST /v1/feedback."
             },
             "HTTPValidationError": {
                 "properties": {
@@ -2609,7 +2669,7 @@
                             }
                         ],
                         "title": "Context",
-                        "description": "Scoring context. `null` (the default) **pools events across all contexts** \u2014 the entity's full event log, ordered by recency or similarity, regardless of which context each event was submitted under. Aggregates in this branch are sourced from the dominant context (the SQL-proxy `n_events >= 3`, then `n_events DESC`, then `context ASC` resolver shared with `/v1/profile` and the entity HTML page), and the resolved value is echoed back as `displayed_context`. Pass an explicit string to restrict both events and aggregates to that context."
+                        "description": "Scoring context. `null` (the default) **pools events across all contexts** \u2014 the entity's full event log, ordered by recency or similarity, regardless of which context each event was submitted under. Aggregates in this branch are sourced from the dominant context (the SQL-proxy `n_events >= 2`, then `n_events DESC`, then `context ASC` resolver shared with `/v1/profile` and the entity HTML page), and the resolved value is echoed back as `displayed_context`. Pass an explicit string to restrict both events and aggregates to that context."
                     },
                     "query": {
                         "anyOf": [
@@ -3026,7 +3086,7 @@
                     "scorer_id": {
                         "type": "string",
                         "title": "Scorer Id",
-                        "description": "Stable identifier for this scorer, e.g. `beta_decay@h3_k5_v1`. Pass this to `?scorer=` query params to request readings from a specific scorer."
+                        "description": "Stable identifier for this scorer, e.g. `beta_decay@h3_k3_v1`. Pass this to `?scorer=` query params to request readings from a specific scorer."
                     },
                     "state_schema_version": {
                         "type": "integer",
@@ -3165,6 +3225,10 @@
         {
             "name": "system",
             "description": "Liveness, readiness, and version endpoints."
+        },
+        {
+            "name": "feedback",
+            "description": "Submit qualitative product feedback about Cairn itself (ideas, bug reports). Authenticated and rate-limited; no read API in v1."
         }
     ]
 }

@@ -52,7 +52,7 @@
     "cairn_base_url": {
       "type": "string",
       "title": "Cairn deployment URL",
-      "description": "Base URL of the Cairn API. ⚠️ The default is an AWS App Runner subdomain on a shared zone — for any non-experimental use, point this at your own deployment to avoid DNS-takeover risk on the shared host.",
+      "description": "Base URL of the Cairn API. Defaults to the hosted Cairn deployment; override to point at a local dev server (e.g. http://localhost:8000) or a different deployment.",
       "required": false,
       "default": "https://api.cairnscore.ai"
     },
