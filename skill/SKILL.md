@@ -29,6 +29,7 @@ This file covers the procedural skeleton. Detailed reference material lives alon
 - `scripts/cs-doctor` — **run first when anything cairn-related fails** (mint, flush, score lookup). One-shot install/runtime health check; ✓/✗ per check
 - `scripts/mint-key.sh` — mints a Cairn API key (ephemeral by default, stable identity on request)
 - `scripts/cs-hook-postool` + `scripts/cs-judge-and-rate` — hook-driven auto-rating: a PostToolUse hook briefs a judge that queues a rating via `cs-rate`, flushed by the Stop hook. Internal plumbing wired in `settings.json`; you don't call these by hand.
+- `scripts/cs-sanitize-rating` — salvage/validate guard the judge pipes its rating through before `cs-rate`: trims tool-call/XML tag fragments a small rater model can leak into `rationale`/`task`, rejecting unsalvageable ratings. Internal plumbing; you don't call it by hand.
 
 **Pick the right surface for what's connected:**
 

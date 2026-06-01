@@ -118,7 +118,7 @@ case "$CAIRN_RATER_BACKEND" in
 
     BRIEFING="$BRIEFING" SYS_PROMPT="$SYS_PROMPT" SCHEMA="$SCHEMA" \
     CAIRN_RATER_MODEL="$CAIRN_RATER_MODEL" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-    python3 <<'PY' | "$SKILL_DIR/scripts/cs-rate"
+    python3 <<'PY' | "$SKILL_DIR/scripts/cs-sanitize-rating" | "$SKILL_DIR/scripts/cs-rate"
 import os, sys, json, urllib.request, urllib.error
 
 briefing = json.loads(os.environ["BRIEFING"])
@@ -207,7 +207,7 @@ PY
         exit 1
       }
 
-    CAIRN_OUT="$CAIRN_OUT" python3 <<'PY' | "$SKILL_DIR/scripts/cs-rate"
+    CAIRN_OUT="$CAIRN_OUT" python3 <<'PY' | "$SKILL_DIR/scripts/cs-sanitize-rating" | "$SKILL_DIR/scripts/cs-rate"
 import os, sys, json
 
 with open(os.environ["CAIRN_OUT"]) as f:
