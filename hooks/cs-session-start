@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# SessionStart hook: print a one-line status banner so silent-failure
+# scenarios (no rater configured, no uv on PATH, queue stalled) become
+# visible at session start rather than failing silently to ~/.cairn/hook.log.
+#
+# Output goes to stderr — Claude Code surfaces SessionStart stderr as a
+# system reminder visible at the top of the session.
+#
+# Stays under 5s (the hook timeout). All checks are local and cheap.
+
+set -euo pipefail
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+CAIRN_DIR="$HOME/.cairn"
+
+# Resolve effective rater backend (matches cs-judge-and-rate's resolution).
+backend="${CAIRN_RATER_BACKEND:-claude-cli}"
+if [[ "$backend" == "auto" ]]; then
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then backend="api"; else backend="claude-cli"; fi
+fi
+
+# Check rater readiness.
+rater_status="✓"
+rater_detail=""
+case "$backend" in
+  api)
+    key_file="$HOME/.cairn/anthropic-key"
+    if [[ -z "${ANTHROPIC_API_KEY:-}" && ! -s "$key_file" ]]; then
+      rater_status="✗"
+      rater_detail=" (no ANTHROPIC_API_KEY in env or at $key_file)"
+    fi
+    ;;
+  claude-cli)
+    if ! command -v claude >/dev/null 2>&1; then
+      rater_status="✗"
+      rater_detail=" ('claude' CLI not on PATH — install Claude Code or set CAIRN_RATER_BACKEND=api)"
+    fi
+    ;;
+  *)
+    rater_status="✗"
+    rater_detail=" (unknown backend '$backend' — use 'api' or 'claude-cli')"
+    ;;
+esac
+
+# Check uv (needed for the MCP server).
+uv_status="✓"
+if ! command -v uv >/dev/null 2>&1; then
+  uv_status="✗ (uv not on PATH — MCP tools won't load; install: curl -LsSf https://astral.sh/uv/install.sh | sh)"
+fi
+
+# Check queue.
+queue_file="$CAIRN_DIR/queue.jsonl"
+queue_status=""
+if [[ -s "$queue_file" ]]; then
+  n=$(wc -l < "$queue_file" 2>/dev/null | tr -d ' ')
+  queue_status=", ${n} pending"
+fi
+
+# Check for legacy install.sh hooks alongside plugin (double-register risk).
+legacy_warning=""
+settings="$HOME/.claude/settings.json"
+if [[ -f "$settings" ]] && grep -q "/.claude/skills/cairn/scripts/cs-hook-postool" "$settings" 2>/dev/null; then
+  legacy_warning=$'\ncairn: WARNING — legacy install.sh hooks still registered in ~/.claude/settings.json alongside this plugin. Each tool call will be rated TWICE.\n  → run: bash '"$HOME"$'/.claude/skills/cairn/uninstall.sh'
+fi
+
+# Emit single-line banner.
+echo "cairn: rater=${backend}${rater_detail} ${rater_status}, uv ${uv_status}${queue_status}" >&2
+if [[ -n "$legacy_warning" ]]; then
+  echo "$legacy_warning" >&2
+fi

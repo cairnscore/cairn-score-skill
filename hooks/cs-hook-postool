@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Plugin wrapper around skills/cairn/scripts/cs-hook-postool.
+#
+# Injects plugin-context defaults (CAIRN_RATER_BACKEND=claude-cli) without
+# modifying the shared skill script — legacy install.sh users keep whatever
+# they set in ~/.claude/settings.json env, plugin users default to claude-cli
+# (no API key needed; uses Claude Code's own auth).
+#
+# Reads hook-event JSON on stdin and re-emits it to the real script unchanged.
+
+set -euo pipefail
+
+# Default rater backend for plugin context. Existing env wins.
+export CAIRN_RATER_BACKEND="${CAIRN_RATER_BACKEND:-claude-cli}"
+
+# Locate the real script. $CLAUDE_PLUGIN_ROOT is exported by Claude Code; fall
+# back to a relative resolution if invoked outside a plugin context (testing).
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+REAL="$PLUGIN_ROOT/skills/cairn/scripts/cs-hook-postool"
+
+exec "$REAL" "$@"

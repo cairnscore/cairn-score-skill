@@ -1,0 +1,33 @@
+{
+  "name": "cairn",
+  "version": "0.2.0",
+  "description": "Trust + reputation auto-rating for sources, MCP servers, and tools. Rates every WebFetch/WebSearch/MCP/Bash-net call in the background; claude-cli rater (default) bills your claude.ai subscription at ~$0.02-0.07/rating, set CAIRN_RATER_BACKEND=api with ANTHROPIC_API_KEY for ~$0.0003/rating. See https://cairnscore.ai/privacy.",
+  "author": {
+    "name": "Gus Ellerm & Ryan Chard",
+    "url": "https://github.com/cairnscore"
+  },
+  "homepage": "https://github.com/cairnscore/cairn-score-skill",
+  "repository": "https://github.com/cairnscore/cairn-score-skill",
+  "license": "MIT",
+  "keywords": ["trust", "reputation", "rating", "ai-safety", "anthropic", "cairn", "mcp"],
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": {
+    "cairn": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/mcp-server",
+        "--locked",
+        "python",
+        "server.py"
+      ],
+      "env": {
+        "CAIRN_BASE_URL": "https://api.cairnscore.ai",
+        "CAIRN_MINT_SCRIPT": "${CLAUDE_PLUGIN_ROOT}/skills/cairn/scripts/mint-key.sh",
+        "PYTHONWARNINGS": "ignore"
+      }
+    }
+  }
+}
