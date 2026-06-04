@@ -243,18 +243,27 @@ def add_postool(event):
 add_postool("PostToolUse")
 add_postool("PostToolUseFailure")
 
-stop_entries = hooks.setdefault("Stop", [])
-if not already_has(stop_entries, flush_cmd):
-    stop_entries.append({
-        "hooks": [{
-            "type": "command",
-            "command": flush_cmd,
-            "timeout": 30,
-        }],
-    })
-    print(f"  registered Stop hook → {flush_cmd}")
-else:
-    print("  Stop hook already registered (skipping)")
+def add_flush_hook(event):
+    entries = hooks.setdefault(event, [])
+    if not already_has(entries, flush_cmd):
+        entries.append({
+            "hooks": [{
+                "type": "command",
+                "command": flush_cmd,
+                "timeout": 30,
+            }],
+        })
+        print(f"  registered {event} hook → {flush_cmd}")
+    else:
+        print(f"  {event} hook already registered (skipping)")
+
+# Stop fires per-turn (when Claude finishes responding) — bounds queue size
+# in long sessions. SessionEnd fires on /exit, /clear, logout, etc. — catches
+# events queued by the async rater AFTER the last per-turn Stop. Both are
+# needed: a single rater dispatch can finish AFTER Stop has already fired,
+# leaving the event stranded until SessionEnd drains it on session teardown.
+add_flush_hook("Stop")
+add_flush_hook("SessionEnd")
 
 with open(settings_path, "w") as f:
     json.dump(data, f, indent=2)
