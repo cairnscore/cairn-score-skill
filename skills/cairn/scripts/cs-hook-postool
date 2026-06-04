@@ -81,6 +81,45 @@ tool_name = data.get("tool_name") or ""
 tool_input = data.get("tool_input") or {}
 tool_response = data.get("tool_response") or {}
 
+# Rating cadence: rate 1-in-N tool calls (per-session). Cheaper for users
+# who burn through hundreds of tool calls and don't need every single one
+# rated. Counter is per-session_id (resets each Claude Code session), so
+# even heavy sessions get proportional coverage. 1 = rate every call.
+try:
+    _cadence = max(1, int(os.environ.get("CAIRN_HOOK_CADENCE", "1")))
+except ValueError:
+    _cadence = 1
+
+if _cadence > 1:
+    import fcntl
+    _session_id = data.get("session_id") or "no-session"
+    # Sanitize for filesystem path (claude code uses uuid-ish ids; belt-and-suspenders).
+    _safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", _session_id)[:64]
+    _counter_dir = os.path.expanduser("~/.cairn/counters")
+    os.makedirs(_counter_dir, mode=0o700, exist_ok=True)
+    _counter_path = os.path.join(_counter_dir, f"{_safe_sid}.count")
+    _lock_path = _counter_path + ".lock"
+    # Atomic read-increment-write under fcntl. The lock file is created with
+    # umask 077 → 0600, matching the rest of ~/.cairn/.
+    _old_umask = os.umask(0o077)
+    try:
+        with open(_lock_path, "a+") as _lf:
+            fcntl.flock(_lf.fileno(), fcntl.LOCK_EX)
+            try:
+                with open(_counter_path) as _cf:
+                    _count = int((_cf.read().strip() or "0"))
+            except (FileNotFoundError, ValueError):
+                _count = 0
+            _count += 1
+            with open(_counter_path, "w") as _cf:
+                _cf.write(str(_count))
+    finally:
+        os.umask(_old_umask)
+    # 1-indexed: rate call #1, then call #(1+N), #(1+2N), etc. So cadence=4
+    # rates calls 1, 5, 9, ... and skips 2, 3, 4, 6, 7, 8, ...
+    if (_count - 1) % _cadence != 0:
+        sys.exit(0)
+
 # Credential redaction. Applied to any string field that might surface in the
 # briefing (tool_input + tool_response after JSON-stringify). Catches the
 # common shapes a security-conscious reviewer would expect:

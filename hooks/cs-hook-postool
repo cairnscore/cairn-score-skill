@@ -1,17 +1,28 @@
 #!/usr/bin/env bash
 # Plugin wrapper around skills/cairn/scripts/cs-hook-postool.
 #
-# Injects plugin-context defaults (CAIRN_RATER_BACKEND=claude-cli) without
-# modifying the shared skill script — legacy install.sh users keep whatever
-# they set in ~/.claude/settings.json env, plugin users default to claude-cli
-# (no API key needed; uses Claude Code's own auth).
+# Translates the plugin's userConfig values (exported as
+# $CLAUDE_PLUGIN_OPTION_<KEY>) into the env vars the existing skill scripts
+# already understand, then execs the real hook script. Shell env always wins
+# — userConfig is only the fallback. Legacy install.sh users keep whatever
+# they set in ~/.claude/settings.json.
 #
 # Reads hook-event JSON on stdin and re-emits it to the real script unchanged.
 
 set -euo pipefail
 
-# Default rater backend for plugin context. Existing env wins.
-export CAIRN_RATER_BACKEND="${CAIRN_RATER_BACKEND:-claude-cli}"
+# Rater backend: shell env → userConfig → claude-cli default.
+export CAIRN_RATER_BACKEND="${CAIRN_RATER_BACKEND:-${CLAUDE_PLUGIN_OPTION_RATER_BACKEND:-claude-cli}}"
+
+# Anthropic API key (api backend only): shell env → userConfig.
+# Only inject from userConfig if shell env is unset, so a user with
+# ANTHROPIC_API_KEY exported in their shell wins over a stale stored value.
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -n "${CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY:-}" ]]; then
+  export ANTHROPIC_API_KEY="$CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY"
+fi
+
+# Rating cadence: shell env → userConfig → 1 (rate every call).
+export CAIRN_HOOK_CADENCE="${CAIRN_HOOK_CADENCE:-${CLAUDE_PLUGIN_OPTION_RATING_CADENCE:-1}}"
 
 # Locate the real script. $CLAUDE_PLUGIN_ROOT is exported by Claude Code; fall
 # back to a relative resolution if invoked outside a plugin context (testing).

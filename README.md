@@ -12,7 +12,14 @@ This repo wires Cairn into Claude. Pick the install path that matches how you us
 
 All three coexist. The Code plugin and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity.
 
-> **⚠ Cost disclosure (Claude Code).** The plugin rates every `WebFetch` / `WebSearch` / `mcp__*` / network-bound `Bash` call. With the default `claude-cli` rater, this bills your **claude.ai subscription** at roughly **$0.02–0.07 per rating** (~20s, no API key needed). A heavy session — 100 tool calls/day — runs ~$2–7/day. Set `CAIRN_RATER_BACKEND=api` with an `ANTHROPIC_API_KEY` to drop to ~$0.0003/rating. Opt out per-host with `CAIRN_HOOK_HOSTS_DENYLIST` or fully with `CAIRN_HOOK_ENABLED=0`. See [Data flow & privacy](#data-flow--privacy) below.
+> **⚠ Cost disclosure (Claude Code).** The plugin rates every `WebFetch` / `WebSearch` / `mcp__*` / network-bound `Bash` call. With the default `claude-cli` rater, this bills your **claude.ai subscription** at roughly **$0.02–0.07 per rating** (~20s, no API key needed). A heavy session — 100 tool calls/day — runs ~$2–7/day.
+>
+> Three cost levers, in order of impact:
+> 1. **Set rating cadence** (1-in-N) at install or via `CAIRN_HOOK_CADENCE` env. Cadence 4 → ~25% of calls rated, ~4× cheaper. Higher = cheaper but less feedback to the corpus.
+> 2. **Switch backend** to `api` with `CAIRN_RATER_BACKEND=api` + `ANTHROPIC_API_KEY` — drops to ~$0.0003/rating (~100× cheaper than `claude-cli`).
+> 3. **Scope out hosts** with `CAIRN_HOOK_HOSTS_DENYLIST=internal.corp,vault.,localhost`, or disable fully with `CAIRN_HOOK_ENABLED=0`.
+>
+> See [Data flow & privacy](#data-flow--privacy) below for the full story.
 
 ---
 
@@ -48,11 +55,19 @@ All subsequent installs reuse this key, so every rating attributes to your chose
 /plugin install cairn@cairn-marketplace
 ```
 
+On install, Claude Code prompts for three settings:
+
+| Field | What | Default |
+|---|---|---|
+| **Rater backend** | `claude-cli` (uses your claude.ai subscription, no API key needed, ~$0.02-0.07/rating) or `api` (uses your Anthropic API key, ~$0.0003/rating). | `claude-cli` |
+| **Anthropic API key** | Required only if you picked `api`. Stored in the system keychain (sensitive). | empty |
+| **Rating cadence** | Rate 1-in-N tool calls per session. `1` = full coverage; `4` = ~4× cheaper but only ~25% of calls are rated. Counter resets each session. | `1` |
+
 Then **start a fresh Claude Code session** — hooks load at session start, so the session you installed from will not see them.
 
-The plugin registers PostToolUse + PostToolUseFailure + Stop hooks (matcher `WebFetch|WebSearch|Bash|mcp__.*`), exposes the 10 MCP tools (`score`, `profile`, `rate`, etc.), and prints a one-line status banner at every session start so silent-failure modes (rater not configured, `uv` missing) become visible immediately.
+The plugin registers PostToolUse + PostToolUseFailure + Stop + SessionEnd hooks (matcher `WebFetch|WebSearch|Bash|mcp__.*`), exposes the 10 MCP tools (`score`, `profile`, `rate`, etc.), and prints a one-line status banner at every session start so silent-failure modes (rater not configured, `uv` missing, non-default cadence active) become visible immediately.
 
-**Default rater backend** is `claude-cli` — works for anyone logged into Claude Code, no API key required. To switch to the cheaper `api` backend, export `CAIRN_RATER_BACKEND=api` plus `ANTHROPIC_API_KEY` (or write the key to `~/.cairn/anthropic-key`, mode 0600). See [Data flow & privacy](#data-flow--privacy) for the full cost / privacy story.
+Want to change a setting later? Use `/plugin` → Installed → cairn → Settings to re-prompt.
 
 **Verify:**
 ```bash
@@ -226,6 +241,7 @@ When the auto-rating hook fires on a tool call, here's exactly what leaves the m
 |---|---|
 | `CAIRN_HOOK_ENABLED=0` | Disable the auto-rating hook entirely. MCP tools still work; only the background loop stops. |
 | `CAIRN_HOOK_HOSTS_DENYLIST="internal.corp,vault.,localhost:5432"` | Comma-separated substring list. Skip the briefing if the URL / MCP server name contains any of them. Use to scope-out credential-handling hosts before the redaction layer is asked to do its work. |
+| `CAIRN_HOOK_CADENCE=N` | Rate 1-in-N tool calls per session (default `1`). Per-session counter resets each session. Cheaper for heavy-tool sessions where every-call rating wastes tokens. |
 | `CAIRN_RATER_BACKEND=api\|claude-cli` | Pick rater backend. Plugin path defaults to `claude-cli`; `install.sh` lets you choose at install time. |
 
 **Third parties.** The `api` rater backend sends briefings to `api.anthropic.com`, so the Anthropic ToS applies to that traffic. The `claude-cli` backend keeps traffic on the same Anthropic surface as your normal Claude Code usage. Ratings go to `api.cairnscore.ai` regardless.
@@ -242,10 +258,11 @@ The defaults work out of the box. Override when you need to:
 |---|---|---|
 | `CAIRN_BASE_URL` | Cairn deployment URL. Override to point at a local dev server (`http://localhost:8000`) or a different deployment. | `https://api.cairnscore.ai` |
 | `CAIRN_DEBUG_LOG` | When set, every request/response writes to this file as JSONL (mode 0o600). Use for debugging why a call didn't behave. | unset |
-| `CAIRN_RATER_BACKEND` | `api` or `claude-cli` (Code only). Plugin path defaults to `claude-cli`; `install.sh` lets you choose at install time. Set in env to override per-session. | `claude-cli` (plugin) / install-time (legacy) |
+| `CAIRN_RATER_BACKEND` | `api` or `claude-cli` (Code only). Plugin path defaults to `claude-cli` (userConfig overrides); `install.sh` lets you choose at install time. Set in env to override per-session. | `claude-cli` (plugin) / install-time (legacy) |
+| `CAIRN_HOOK_CADENCE` | Rate 1-in-N tool calls per session. `1` = rate every call; `4` = rate every 4th. Counter is per-session_id, resets each session. Plugin userConfig sets this; env overrides per-session. | `1` |
 | `CAIRN_HOOK_ENABLED` | Set to `0`/`false`/`no`/`off` to disable the auto-rating hook entirely. MCP tools still work; only the background loop stops. | enabled |
 | `CAIRN_HOOK_HOSTS_DENYLIST` | Comma-separated substring list. Skip the briefing if the URL / MCP server name contains any of them. Use to scope-out credential-handling hosts. | unset |
-| `ANTHROPIC_API_KEY` | Used by the `api` rater backend. Auto-loaded from `~/.cairn/anthropic-key` (mode 0600) if set there. | unset |
+| `ANTHROPIC_API_KEY` | Used by the `api` rater backend. Plugin path: stored in the keychain via userConfig. Legacy path: auto-loaded from `~/.cairn/anthropic-key` (mode 0600) if set there. | unset |
 
 For Desktop `.mcpb` installs, set these via the installer UI's config form. For Code (plugin), set in your shell env or `~/.claude/settings.json`'s `env` block. For Code (legacy `install.sh`), the installer writes them into `~/.claude/settings.json`. For ad-hoc invocations, export them in your shell.
 

@@ -15,11 +15,18 @@ set -euo pipefail
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 CAIRN_DIR="$HOME/.cairn"
 
-# Resolve effective rater backend (matches cs-judge-and-rate's resolution).
-backend="${CAIRN_RATER_BACKEND:-claude-cli}"
+# Resolve effective rater backend: shell env → userConfig → claude-cli default.
+backend="${CAIRN_RATER_BACKEND:-${CLAUDE_PLUGIN_OPTION_RATER_BACKEND:-claude-cli}}"
 if [[ "$backend" == "auto" ]]; then
-  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then backend="api"; else backend="claude-cli"; fi
+  if [[ -n "${ANTHROPIC_API_KEY:-}" || -n "${CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY:-}" ]]; then
+    backend="api"
+  else
+    backend="claude-cli"
+  fi
 fi
+
+# Resolve effective rating cadence (1 = rate every call).
+cadence="${CAIRN_HOOK_CADENCE:-${CLAUDE_PLUGIN_OPTION_RATING_CADENCE:-1}}"
 
 # Check rater readiness.
 rater_status="✓"
@@ -27,9 +34,9 @@ rater_detail=""
 case "$backend" in
   api)
     key_file="$HOME/.cairn/anthropic-key"
-    if [[ -z "${ANTHROPIC_API_KEY:-}" && ! -s "$key_file" ]]; then
+    if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY:-}" && ! -s "$key_file" ]]; then
       rater_status="✗"
-      rater_detail=" (no ANTHROPIC_API_KEY in env or at $key_file)"
+      rater_detail=" (no ANTHROPIC_API_KEY in env, userConfig, or at $key_file)"
     fi
     ;;
   claude-cli)
@@ -65,8 +72,14 @@ if [[ -f "$settings" ]] && grep -q "/.claude/skills/cairn/scripts/cs-hook-postoo
   legacy_warning=$'\ncairn: WARNING — legacy install.sh hooks still registered in ~/.claude/settings.json alongside this plugin. Each tool call will be rated TWICE.\n  → run: bash '"$HOME"$'/.claude/skills/cairn/uninstall.sh'
 fi
 
+# Build cadence segment: only show when not the default (1 = rate every call).
+cadence_segment=""
+if [[ "$cadence" != "1" ]]; then
+  cadence_segment=", cadence=1-in-${cadence}"
+fi
+
 # Emit single-line banner.
-echo "cairn: rater=${backend}${rater_detail} ${rater_status}, uv ${uv_status}${queue_status}"
+echo "cairn: rater=${backend}${rater_detail} ${rater_status}, uv ${uv_status}${cadence_segment}${queue_status}"
 if [[ -n "$legacy_warning" ]]; then
   echo "$legacy_warning"
 fi
