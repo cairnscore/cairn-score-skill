@@ -3,23 +3,23 @@
 # Idempotent — picks up any new scripts, hook entries, or env vars.
 #
 # Usage:
-#   bash skill/update-skill.sh                # from the cloned source repo
-#   bash /path/to/clone/skill/update-skill.sh # if installed via clone-elsewhere
+#   bash skills/cairn/update-skill.sh                # from the cloned source repo
+#   bash /path/to/clone/skills/cairn/update-skill.sh # if installed via clone-elsewhere
 #
 # Honors:
 #   CAIRN_RATER_BACKEND — pass-through to install.sh (skips backend prompt)
 
 set -euo pipefail
 
-# This script lives at <repo>/skill/update-skill.sh. The git root is one
-# level up. REPO_DIR can be overridden if the layout changes.
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# This script lives at <repo>/skills/cairn/update-skill.sh. The git root is two
+# levels up. REPO_DIR can be overridden if the layout changes.
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
 if [[ ! -d "$REPO_DIR/.git" ]]; then
   echo "update-skill.sh: $REPO_DIR is not a git checkout." >&2
   echo "  Clone the repo first (anywhere; not necessarily ~/.claude/skills/):" >&2
-  echo "    git clone https://github.com/GusEllerm/cairn-score-skill.git ~/code/cairn-score-skill" >&2
-  echo "  Then re-run: bash ~/code/cairn-score-skill/skill/update-skill.sh" >&2
+  echo "    git clone https://github.com/cairnscore/cairn-score-skill.git ~/code/cairn-score-skill" >&2
+  echo "  Then re-run: bash ~/code/cairn-score-skill/skills/cairn/update-skill.sh" >&2
   exit 1
 fi
 
@@ -40,4 +40,4 @@ fi
 
 echo
 # install.sh defaults DEST to ~/.claude/skills/cairn; don't override here.
-bash "$REPO_DIR/skill/install.sh"
+bash "$REPO_DIR/skills/cairn/install.sh"

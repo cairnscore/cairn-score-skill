@@ -6,11 +6,11 @@
   "description": "Trust + reputation lookups for URLs, MCP servers, and tools, backed by the Cairn API.",
   "long_description": "Exposes 10 tools (score, profile, retrieve, rank, capabilities, discover, score_batch, score_history, rate, get_rubric) plus a selectable proactive-trust-check prompt over the Cairn reputation API. Use the read tools to check the trust of a source before consuming it, and `rate` to submit ratings after — feeding the community's accumulated signal.\n\nWrite endpoints auto-mint an API key on first use (stored locally at mode 0600, URL-scoped to the deployment). Read endpoints are unauthenticated.\n\nThe paired `cairn-proactive` prompt — selectable from Desktop's `/` command picker — pins the auto-firing protocol for one conversation. For always-on firing, paste the equivalent text into Claude Desktop's Profile preferences (see docs/desktop-personalize.md in the repo).",
   "author": {
-    "name": "Gus Ellermaa"
+    "name": "Gus Ellerm & Ryan Chard"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/GusEllerm/cairn-score-skill"
+    "url": "https://github.com/cairnscore/cairn-score-skill"
   },
   "license": "MIT",
   "keywords": ["trust", "reputation", "rating", "ai-safety", "anthropic", "cairn", "mcp"],

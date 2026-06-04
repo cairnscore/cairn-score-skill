@@ -6,11 +6,11 @@ This repo wires Cairn into Claude. Pick the install path that matches how you us
 
 | If you use… | You get | One-line install |
 |---|---|---|
-| **Claude Code** (CLI) | Background rating of every tool call. Invisible to the model; ratings happen automatically via `PostToolUse` hooks. Highest signal density. | `bash skill/install.sh` |
+| **Claude Code** (CLI) | Background rating of every tool call. Invisible to the model; ratings happen automatically via `PostToolUse` hooks. Highest signal density. | `bash skills/cairn/install.sh` |
 | **Claude Desktop** (app) | Ten MCP tools (`score`, `rate`, `discover`, `profile`, …) the model calls when relevant. Tool invocations are visible in chat. | Double-click `dist/cairn.mcpb` |
 | **claude.ai** (web) | The skill loads via claude.ai's router and primes Claude to call Cairn endpoints via `curl`. No local install. | Upload `dist/cairn-skill.zip` at Settings → Capabilities → Skills |
 
-All three coexist. The Code skill and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity. The unified installer (`bash skill/install.sh --desktop`) sets up Code + Desktop in one command.
+All three coexist. The Code skill and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity. The unified installer (`bash skills/cairn/install.sh --desktop`) sets up Code + Desktop in one command.
 
 ---
 
@@ -26,7 +26,7 @@ If you want longitudinal signal across reinstalls or fresh machines, pre-mint on
 # Pre-mint with a stable identity (any URI-shaped string — your name, an
 # agent handle, etc. — but avoid the reserved `agent://cairnscore-*` and
 # `agent://anthropic/*` prefixes).
-bash skill/scripts/mint-key.sh --write agent://your-org/your-name
+bash skills/cairn/scripts/mint-key.sh --write agent://your-org/your-name
 
 # The key is now persisted at ~/.cairn/keys/<host>.key (mode 0600).
 # Back it up to your secret store of choice (1Password, keychain, etc).
@@ -40,7 +40,7 @@ All subsequent installs reuse this key, so every rating attributes to your chose
 
 ```bash
 git clone https://github.com/cairnscore/cairn-score-skill.git ~/code/cairn-score-skill
-bash ~/code/cairn-score-skill/skill/install.sh
+bash ~/code/cairn-score-skill/skills/cairn/install.sh
 ```
 
 The installer prompts for a rater backend:
@@ -78,10 +78,10 @@ The two ⚠ lines are expected for a clean install — the key file is **lazy-mi
 **Non-interactive install** (for scripts / CI / AI agents): set `CAIRN_RATER_BACKEND=api|claude-cli` in env to skip the backend prompt. For the `api` backend, set `ANTHROPIC_API_KEY` in env to skip the secret prompt. Example:
 
 ```bash
-CAIRN_RATER_BACKEND=claude-cli bash ~/code/cairn-score-skill/skill/install.sh
+CAIRN_RATER_BACKEND=claude-cli bash ~/code/cairn-score-skill/skills/cairn/install.sh
 ```
 
-**Update later:** `bash ~/code/cairn-score-skill/skill/update-skill.sh` (git pulls + re-runs the installer).
+**Update later:** `bash ~/code/cairn-score-skill/skills/cairn/update-skill.sh` (git pulls + re-runs the installer).
 
 **Install Code + Desktop together:** add `--desktop` to the install command above — installs the Code skill **and** registers the MCP server in Claude Desktop's config in one command (uses the JSON-fallback path from Path 2 below, not `.mcpb`).
 
@@ -101,7 +101,7 @@ cd ~/code/cairn-score-skill/mcp-server && bash build-mcpb.sh
 
 Requires Node ≥ 18 (`node -v` to check; install from [nodejs.org](https://nodejs.org) or `brew install node`). The script uses `npx` so no global package install is needed.
 
-> **Also a Claude Code user?** Skip this build entirely — run `bash skill/install.sh --desktop` from Path 1 to install both Code and Desktop in one shot (uses the JSON-fallback path, not `.mcpb`).
+> **Also a Claude Code user?** Skip this build entirely — run `bash skills/cairn/install.sh --desktop` from Path 1 to install both Code and Desktop in one shot (uses the JSON-fallback path, not `.mcpb`).
 
 ### Install
 
@@ -114,7 +114,7 @@ Desktop's installer UI opens, lists the ten tools the bundle ships, and prompts 
 
 **Restart Desktop after installing** — **Cmd+Q** (macOS) or quit from the system tray (Windows/Linux), then reopen. Just closing the window leaves Desktop running with the old config in memory; the MCP won't appear.
 
-**Verify:** open **Settings → Connectors** — `cairn` should show with all ten tools listed (`score`, `profile`, `rate`, `retrieve`, `rank`, `discover`, `capabilities`, `score_batch`, `score_history`, `get_rubric`). For a deeper check, run `bash ~/code/cairn-score-skill/skill/scripts/cs-doctor` from the cloned repo.
+**Verify:** open **Settings → Connectors** — `cairn` should show with all ten tools listed (`score`, `profile`, `rate`, `retrieve`, `rank`, `discover`, `capabilities`, `score_batch`, `score_history`, `get_rubric`). For a deeper check, run `bash ~/code/cairn-score-skill/skills/cairn/scripts/cs-doctor` from the cloned repo.
 
 If `cairn` doesn't appear in Connectors, check `~/Library/Logs/Claude/mcp.log` (macOS) for `[cairn] Server started and connected successfully` — a successful spawn means it's loaded, the UI is just rendering it somewhere else (some Desktop versions group MCPs under "Connectors → Custom").
 
@@ -136,7 +136,7 @@ If you can't run `npx` (no Node) you can register the MCP manually by merging th
       "command": "/absolute/path/to/uv",
       "args": ["--directory", "/absolute/path/to/cairn-score-skill/mcp-server", "run", "--locked", "python", "server.py"],
       "env": {
-        "CAIRN_MINT_SCRIPT": "/absolute/path/to/cairn-score-skill/skill/scripts/mint-key.sh",
+        "CAIRN_MINT_SCRIPT": "/absolute/path/to/cairn-score-skill/skills/cairn/scripts/mint-key.sh",
         "PYTHONWARNINGS": "ignore"
       }
     }
@@ -152,7 +152,7 @@ Find your `uv` path with `which uv` — Desktop's launchd environment doesn't in
 
 Upload `dist/cairn-skill.zip` at **claude.ai → Settings → Capabilities → Skills**. No local install. The skill router triggers on the description's keywords and gives Claude the documented `curl` patterns to call Cairn.
 
-**Where to get the zip:** download the prebuilt `cairn-skill.zip` from this repo's [GitHub Releases](https://github.com/cairnscore/cairn-score-skill/releases) page. (No release yet? Clone the repo and build it: `git clone https://github.com/cairnscore/cairn-score-skill.git && cd cairn-score-skill/skill && zip -r ../dist/cairn-skill.zip SKILL.md references/*.md`.)
+**Where to get the zip:** download the prebuilt `cairn-skill.zip` from this repo's [GitHub Releases](https://github.com/cairnscore/cairn-score-skill/releases) page. (No release yet? Clone the repo and build it: `git clone https://github.com/cairnscore/cairn-score-skill.git && cd cairn-score-skill/skills/cairn && zip -r ../../dist/cairn-skill.zip SKILL.md references/*.md`.)
 
 **Verify the skill loaded:** start a fresh claude.ai conversation and ask:
 
@@ -228,7 +228,7 @@ bash docs/_reset-cairn-state.sh
 
 ## What's in this repo
 
-- `skill/` — Claude Code skill (`SKILL.md`, `references/`, wrapper scripts, installer)
+- `skills/cairn/` — Claude Code skill (`SKILL.md`, `references/`, wrapper scripts, installer)
 - `mcp-server/` — Python MCP server + `.mcpb` packaging
 - `dist/` — built artifacts (gitignored; rebuilt by the commands above)
 - `docs/` — test plan (`TEST-PLAN.md`), Desktop personalize text (`desktop-personalize.md`), and the reset utility (`_reset-cairn-state.sh`)

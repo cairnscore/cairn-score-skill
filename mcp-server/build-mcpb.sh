@@ -10,12 +10,12 @@
 #   - npm + npx on PATH (Node ≥ 18). Either `mcpb` already installed
 #     globally (`npm i -g @anthropic-ai/mcpb`) OR npx, which will fetch
 #     the package transiently — no global install needed.
-#   - A sibling skill/ directory containing scripts/mint-key.sh
+#   - A sibling skills/cairn/ directory containing scripts/mint-key.sh
 #
 # What it does:
 #   1. Sanity-checks the bundled mint-key.sh source (since the MCP shells out
 #      to it for the read-or-mint-and-persist critical section).
-#   2. Copies skill/scripts/mint-key.sh into mcp-server/bundled/ so the
+#   2. Copies skills/cairn/scripts/mint-key.sh into mcp-server/bundled/ so the
 #      manifest's CAIRN_MINT_SCRIPT can point at the bundle-local
 #      path (${__dirname}/bundled/mint-key.sh) — no external dep at runtime.
 #   3. Runs `mcpb pack .` which zips per .mcpbignore and writes the artifact.
@@ -43,10 +43,10 @@ else
 fi
 
 # 1. Validate the sibling skill checkout
-MINT_SRC="../skill/scripts/mint-key.sh"
+MINT_SRC="../skills/cairn/scripts/mint-key.sh"
 if [[ ! -f "$MINT_SRC" ]]; then
   echo "build-mcpb.sh: $MINT_SRC missing — can't bundle the mint script" >&2
-  echo "  is the sibling skill/ directory present? (this script assumes a" >&2
+  echo "  is the sibling skills/cairn/ directory present? (this script assumes a" >&2
   echo "  same-repo layout; if you've split repos, adjust MINT_SRC)" >&2
   exit 1
 fi

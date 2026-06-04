@@ -66,8 +66,8 @@ echo
 
 # Copy skill files into place (unless source == dest, e.g. re-running in place).
 # Skill content (SKILL.md, references/, scripts/, installer scripts) lives
-# alongside this script in skill/. README.md and LICENSE live one level up at
-# the repo root; copy them in too if present so the installed dir is browsable.
+# alongside this script in skills/cairn/. README.md and LICENSE live two levels
+# up at the repo root; copy them in too if present so the installed dir is browsable.
 if [[ "$SRC" != "$DEST" ]]; then
   mkdir -p "$DEST"
   for item in SKILL.md references scripts install.sh uninstall.sh update-skill.sh; do
@@ -76,8 +76,8 @@ if [[ "$SRC" != "$DEST" ]]; then
     fi
   done
   for item in README.md LICENSE; do
-    if [[ -e "$SRC/../$item" ]]; then
-      cp "$SRC/../$item" "$DEST/"
+    if [[ -e "$SRC/../../$item" ]]; then
+      cp "$SRC/../../$item" "$DEST/"
     fi
   done
   echo "  copied skill files → $DEST"
@@ -242,7 +242,7 @@ if [[ "$DESKTOP" -eq 1 ]]; then
   echo
   echo "--- Desktop MCP registration (--desktop) ---"
 
-  MCP_DIR="$SRC/../mcp-server"
+  MCP_DIR="$SRC/../../mcp-server"
   if [[ ! -f "$MCP_DIR/server.py" ]]; then
     echo "install.sh: --desktop requires running from the cloned repo where" >&2
     echo "  $MCP_DIR/server.py exists. Re-runs from the installed location" >&2

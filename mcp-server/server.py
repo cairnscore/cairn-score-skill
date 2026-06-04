@@ -64,7 +64,7 @@ DIMENSION_KEYS: frozenset[str] = frozenset({
 METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 # Tags (task_tags, failure_modes) are normalized to snake_case via this regex,
-# matching skill/scripts/cs-rate / cs-flush so the MCP submission shape is
+# matching skills/cairn/scripts/cs-rate / cs-flush so the MCP submission shape is
 # bit-for-bit compatible with the bash path's queued events. Single chars are
 # allowed (matches bash `[a-z][a-z0-9_]{0,63}`); length is enforced by the
 # per-call max_chars truncation, not the regex.
@@ -455,17 +455,17 @@ mcp = FastMCP("cairn", lifespan=lifespan)
 
 
 # ---- Key loader (Phase 3) ----
-# Shells out to skill/scripts/mint-key.sh, which owns read-or-mint-and-persist
+# Shells out to skills/cairn/scripts/mint-key.sh, which owns read-or-mint-and-persist
 # under fcntl.flock. Lazy: called once per server process on first rate call;
 # the result is cached in AppContext.api_key for the lifetime of the server.
 
 def _resolve_mint_script() -> str:
     """Path to mint-key.sh. Default: clone-relative
-    `<server.py-dir>/../skill/scripts/mint-key.sh`. Override via env."""
+    `<server.py-dir>/../skills/cairn/scripts/mint-key.sh`. Override via env."""
     override = os.environ.get("CAIRN_MINT_SCRIPT")
     if override:
         return override
-    return str(Path(__file__).resolve().parent.parent / "skill" / "scripts" / "mint-key.sh")
+    return str(Path(__file__).resolve().parent.parent / "skills" / "cairn" / "scripts" / "mint-key.sh")
 
 
 async def _load_api_key(app_ctx: AppContext, *, force_remint: bool = False) -> str:
@@ -480,7 +480,7 @@ async def _load_api_key(app_ctx: AppContext, *, force_remint: bool = False) -> s
     if not os.path.isfile(script):
         raise ToolError(
             f"mint-key.sh not found at {script}. Set CAIRN_MINT_SCRIPT "
-            "to the path of skill/scripts/mint-key.sh."
+            "to the path of skills/cairn/scripts/mint-key.sh."
         )
     cmd = ["bash", script]
     if force_remint:
@@ -1082,7 +1082,7 @@ async def score_history(
 
 
 # ---- Phase 4 helpers: tag normalization + metric value sanitization ----
-# Mirror skill/scripts/cs-rate so the MCP and bash paths produce equivalent
+# Mirror skills/cairn/scripts/cs-rate so the MCP and bash paths produce equivalent
 # /v1/scores bodies for the same user input.
 
 def _normalize_tag(t: object, max_chars: int) -> str | None:
