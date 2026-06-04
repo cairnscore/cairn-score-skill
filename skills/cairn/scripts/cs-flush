@@ -20,6 +20,14 @@ command -v python3 >/dev/null || { echo "cs-flush: python3 required" >&2; exit 1
 # flush the parent's queue.
 [[ "${CAIRN_NESTED:-}" == "1" ]] && exit 0
 
+# Trace cs-flush invocations to hook.log so we can confirm Stop / SessionEnd
+# fired and whether the script ran to completion (vs being killed mid-flight
+# by Claude Code's process teardown).
+_LOG="$HOME/.cairn/hook.log"
+mkdir -p "$HOME/.cairn"
+echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cs-flush: invoked (trigger=${CAIRN_HOOK_EVENT:-?}, pid=$$, queue_lines=$(wc -l < "${CAIRN_QUEUE:-$HOME/.cairn/queue.jsonl}" 2>/dev/null | tr -d ' ' || echo 0))" >> "$_LOG"
+trap 'echo "[$(date '"'"'+%Y-%m-%dT%H:%M:%S%z'"'"')] cs-flush: exit code=$?" >> "$_LOG"' EXIT
+
 : "${CAIRN_BASE_URL:=https://api.cairnscore.ai}"
 : "${CAIRN_QUEUE:=$HOME/.cairn/queue.jsonl}"
 # Don't default CAIRN_KEY_FILE here — mint-key.sh has its own URL-scoped
