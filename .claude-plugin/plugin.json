@@ -32,7 +32,6 @@
       "max": 100
     }
   },
-  "hooks": "./hooks/hooks.json",
   "mcpServers": {
     "cairn": {
       "command": "uv",
