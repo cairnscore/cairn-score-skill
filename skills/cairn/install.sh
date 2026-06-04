@@ -64,6 +64,37 @@ echo "  dest:     $DEST"
 echo "  settings: $SETTINGS"
 echo
 
+# Detect an existing cairn plugin install — the plugin and install.sh both
+# register hooks, and Claude Code does NOT dedupe by command path. Running both
+# means every tool call gets rated twice (~2x rater cost + duplicate queue
+# events). Warn loudly, but proceed if the user insists (some testing flows
+# want both side-by-side).
+PLUGIN_DIRS=("$HOME/.claude/plugins" "$HOME/.config/claude/plugins")
+for pdir in "${PLUGIN_DIRS[@]}"; do
+  if [[ -d "$pdir" ]] && grep -rl '"name"[[:space:]]*:[[:space:]]*"cairn"' "$pdir" --include='plugin.json' 2>/dev/null | grep -q .; then
+    echo "install.sh: ⚠  detected a Claude Code plugin install of cairn under $pdir"
+    echo "  Running install.sh in addition to the plugin will register the"
+    echo "  hooks TWICE — every tool call will be rated twice, doubling rater"
+    echo "  cost and queueing duplicate ratings."
+    echo
+    echo "  Recommended: uninstall the plugin OR don't run this installer."
+    echo "    /plugin uninstall cairn       # in Claude Code"
+    echo
+    if [[ -z "${CAIRN_INSTALL_FORCE:-}" ]]; then
+      printf "  Continue anyway? [y/N]: "
+      read -r ANSWER
+      case "$ANSWER" in
+        y|Y|yes) echo "  proceeding (you asked for it)…"; echo ;;
+        *)       echo "  aborting. Run with CAIRN_INSTALL_FORCE=1 to skip this prompt." >&2; exit 1 ;;
+      esac
+    else
+      echo "  CAIRN_INSTALL_FORCE=1 set — proceeding."
+      echo
+    fi
+    break
+  fi
+done
+
 # Copy skill files into place (unless source == dest, e.g. re-running in place).
 # Skill content (SKILL.md, references/, scripts/, installer scripts) lives
 # alongside this script in skills/cairn/. README.md and LICENSE live two levels

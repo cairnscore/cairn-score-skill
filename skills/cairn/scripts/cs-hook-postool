@@ -3,7 +3,8 @@
 # Reads Claude Code hook-input JSON on stdin, extracts the external resource
 # involved (URL / MCP server / etc.), constructs a briefing, and feeds it to
 # scripts/cs-judge-and-rate. The rater queues a /v1/scores body via cs-rate;
-# the queue is flushed by the Stop hook (also wired in settings.json).
+# the queue is flushed by the Stop hook (also wired in settings.json or the
+# plugin's hooks.json).
 #
 # Tools handled:
 #   WebFetch     → data_source = URL
@@ -14,9 +15,23 @@
 #
 # Anything else is silently skipped.
 #
-# Designed for `async: true` invocation in settings.json so the agent never
-# waits on this. Errors land in $HOME/.cairn/hook.log; the agent's
-# conversation is never touched.
+# Privacy / safety knobs (env):
+#   CAIRN_HOOK_ENABLED          — "0" / "false" / "no" disables this hook silently
+#                                  (default: enabled).
+#   CAIRN_HOOK_HOSTS_DENYLIST   — comma-separated substrings. If the extracted
+#                                  URL or external_id contains any of them, the
+#                                  event is skipped (no briefing leaves the
+#                                  machine). Substring match — use ports/paths
+#                                  to scope precisely (e.g.
+#                                  "internal.corp,localhost:5432,vault.").
+#
+# Credentials in tool inputs / responses (Authorization headers, Bearer tokens,
+# ?api_key=…, X-*-Token headers, etc.) are redacted before the briefing is
+# constructed — see _redact() below.
+#
+# Designed for `async: true` invocation so the agent never waits on this. The
+# rater is spawned detached; errors land in $HOME/.cairn/hook.log (mode 0600,
+# rotated at 1MB) — the agent's conversation is never touched.
 
 set -euo pipefail
 
@@ -24,15 +39,36 @@ set -euo pipefail
 # hooks (shouldn't happen with --tools "", but belt-and-suspenders), bail out.
 [[ "${CAIRN_NESTED:-}" == "1" ]] && exit 0
 
+# Opt-out: respect CAIRN_HOOK_ENABLED if explicitly disabled.
+case "${CAIRN_HOOK_ENABLED:-}" in
+  0|false|no|off) exit 0 ;;
+esac
+
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$HOME/.cairn"
 LOG="$LOG_DIR/hook.log"
-mkdir -p "$LOG_DIR"
+
+# Create LOG_DIR with restrictive perms (briefing fragments may leak into the
+# log via rater stderr on parse failure — keep readable only by the owner).
+( umask 077 && mkdir -p "$LOG_DIR" )
+chmod 700 "$LOG_DIR" 2>/dev/null || true
+
+# Rotate hook.log at 1MB to bound disk usage and any incidental leakage.
+if [[ -f "$LOG" ]]; then
+  size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' ')
+  if [[ ${size:-0} -gt 1048576 ]]; then
+    [[ -f "$LOG.1" ]] && mv -f "$LOG.1" "$LOG.2"
+    mv -f "$LOG" "$LOG.1"
+  fi
+fi
 
 INPUT=$(cat)
 
 BRIEFING=$(
-  SKILL_DIR="$SKILL_DIR" INPUT="$INPUT" python3 <<'PY'
+  SKILL_DIR="$SKILL_DIR" \
+  INPUT="$INPUT" \
+  HOSTS_DENYLIST="${CAIRN_HOOK_HOSTS_DENYLIST:-}" \
+  python3 <<'PY'
 import os, sys, json, re
 
 raw = os.environ.get("INPUT") or ""
@@ -45,12 +81,46 @@ tool_name = data.get("tool_name") or ""
 tool_input = data.get("tool_input") or {}
 tool_response = data.get("tool_response") or {}
 
+# Credential redaction. Applied to any string field that might surface in the
+# briefing (tool_input + tool_response after JSON-stringify). Catches the
+# common shapes a security-conscious reviewer would expect:
+#   Authorization: Bearer XXX
+#   X-Api-Key: XXX, X-Auth-Token: XXX, etc.
+#   ?api_key=XXX, ?token=XXX, &access_token=XXX
+#   "api_key": "XXX" inside JSON
+_REDACTORS = [
+    # Authorization header (Bearer, Basic, custom schemes) — match the full value
+    # up to the next quote / comma / newline / closing brace.
+    (re.compile(r"(Authorization\s*[:=]\s*)[^\"'\n,}]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # X-*-Key, X-*-Token, X-*-Auth, X-*-Secret headers — same termination.
+    (re.compile(r"(X-[A-Za-z0-9-]*(?:key|token|auth|secret)[A-Za-z0-9-]*\s*[:=]\s*)[^\"'\n,}]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # URL query params.
+    (re.compile(r"([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|key|secret|password|passwd)=)[^&\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # JSON-shape headers / keys: "Authorization": "...", "api_key": "...", etc.
+    (re.compile(r'("(?:Authorization|api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password)"\s*:\s*")[^"]*"', re.IGNORECASE), r'\1[REDACTED]"'),
+]
+
+def _redact(s):
+    if not isinstance(s, str):
+        return s
+    for pattern, repl in _REDACTORS:
+        s = pattern.sub(repl, s)
+    return s
+
+# Hosts denylist (substring match on URL / external_id).
+_denylist = [h.strip() for h in (os.environ.get("HOSTS_DENYLIST") or "").split(",") if h.strip()]
+
+def _denied(s):
+    return any(d in s for d in _denylist) if _denylist else False
+
 entity = None
 task = None
 
 if tool_name == "WebFetch":
     url = tool_input.get("url")
     if url:
+        if _denied(url):
+            sys.exit(0)
         entity = {"type": "data_source", "external_id": url}
         prompt = (tool_input.get("prompt") or "")[:120]
         task = f"WebFetch {url}" + (f" — {prompt}" if prompt else "")
@@ -66,7 +136,10 @@ elif tool_name.startswith("mcp__"):
     if len(parts) >= 2:
         server = parts[1]
         tool_part = parts[2] if len(parts) > 2 else "(unknown)"
-        entity = {"type": "capability", "external_id": f"mcp://{server}"}
+        ext_id = f"mcp://{server}"
+        if _denied(ext_id) or _denied(server):
+            sys.exit(0)
+        entity = {"type": "capability", "external_id": ext_id}
         task = f"MCP call {server}.{tool_part}"
 
 elif tool_name == "Bash":
@@ -78,8 +151,11 @@ elif tool_name == "Bash":
     m = re.search(NET_VERB + r".*?(https?://[^\s'\"<>)]+)", cmd, re.DOTALL)
     if m:
         url = m.group(1).rstrip(".,;)")
+        if _denied(url):
+            sys.exit(0)
         entity = {"type": "data_source", "external_id": url}
-        task = f"Bash network call ({url}): {cmd[:120]}"
+        # Truncate cmd preview AFTER redaction so credentials don't slip into the task line.
+        task = f"Bash network call ({url}): {_redact(cmd)[:120]}"
 
 if entity is None:
     sys.exit(0)
@@ -88,6 +164,11 @@ req_str_full = json.dumps(tool_input) if isinstance(tool_input, (dict, list)) el
 resp_str_full = json.dumps(tool_response) if isinstance(tool_response, (dict, list)) else str(tool_response)
 original_request_bytes = len(req_str_full.encode("utf-8"))
 original_response_bytes = len(resp_str_full.encode("utf-8"))
+
+# Redact BEFORE truncation so a credential mid-string doesn't survive by being
+# pushed past the cap.
+req_str_full = _redact(req_str_full)
+resp_str_full = _redact(resp_str_full)
 
 REQ_CAP, RESP_CAP = 16000, 32000
 
@@ -120,6 +201,12 @@ PY
 if [[ -z "$BRIEFING" ]]; then
   exit 0
 fi
+
+# Create LOG with mode 0600 the first time we touch it.
+if [[ ! -e "$LOG" ]]; then
+  ( umask 077 && : > "$LOG" )
+fi
+chmod 600 "$LOG" 2>/dev/null || true
 
 # Spawn the rater detached: claude-cli rater can take ~20s, and even with
 # `async: true` in settings the hook process itself stays resident for that
