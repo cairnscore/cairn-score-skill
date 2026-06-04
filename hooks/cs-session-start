@@ -3,8 +3,10 @@
 # scenarios (no rater configured, no uv on PATH, queue stalled) become
 # visible at session start rather than failing silently to ~/.cairn/hook.log.
 #
-# Output goes to stderr — Claude Code surfaces SessionStart stderr as a
-# system reminder visible at the top of the session.
+# Output goes to stdout — Claude Code's SessionStart hook treats stdout as
+# `additionalContext` injected into the conversation, so Claude sees the
+# banner and can surface it (or flag any ✗ marks) to the user. Stderr
+# would only land in debug logs.
 #
 # Stays under 5s (the hook timeout). All checks are local and cheap.
 
@@ -64,7 +66,7 @@ if [[ -f "$settings" ]] && grep -q "/.claude/skills/cairn/scripts/cs-hook-postoo
 fi
 
 # Emit single-line banner.
-echo "cairn: rater=${backend}${rater_detail} ${rater_status}, uv ${uv_status}${queue_status}" >&2
+echo "cairn: rater=${backend}${rater_detail} ${rater_status}, uv ${uv_status}${queue_status}"
 if [[ -n "$legacy_warning" ]]; then
-  echo "$legacy_warning" >&2
+  echo "$legacy_warning"
 fi

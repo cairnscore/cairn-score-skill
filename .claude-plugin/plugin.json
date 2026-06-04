@@ -10,7 +10,6 @@
   "repository": "https://github.com/cairnscore/cairn-score-skill",
   "license": "MIT",
   "keywords": ["trust", "reputation", "rating", "ai-safety", "anthropic", "cairn", "mcp"],
-  "skills": "./skills",
   "hooks": "./hooks/hooks.json",
   "mcpServers": {
     "cairn": {
