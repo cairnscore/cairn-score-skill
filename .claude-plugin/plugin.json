@@ -9,12 +9,20 @@
   "homepage": "https://github.com/cairnscore/cairn-score-skill",
   "repository": "https://github.com/cairnscore/cairn-score-skill",
   "license": "MIT",
-  "keywords": ["trust", "reputation", "rating", "ai-safety", "anthropic", "cairn", "mcp"],
+  "keywords": [
+    "trust",
+    "reputation",
+    "rating",
+    "ai-safety",
+    "anthropic",
+    "cairn",
+    "mcp"
+  ],
   "userConfig": {
     "use_api_backend": {
       "type": "boolean",
       "title": "Use Anthropic API for the rater?",
-      "description": "Off (default): use your claude.ai subscription via the `claude` CLI — no API key needed, ~$0.02-0.07/rating, ~20s latency. On: use your Anthropic API key — ~$0.0003/rating (~100x cheaper), ~2s latency. Requires the API key field below.",
+      "description": "Off (default): use your claude.ai subscription via the `claude` CLI \u2014 no API key needed, ~$0.02-0.07/rating, ~20s latency. On: use your Anthropic API key \u2014 ~$0.0003/rating (~100x cheaper), ~2s latency. Requires the API key field below.",
       "default": false
     },
     "anthropic_api_key": {
