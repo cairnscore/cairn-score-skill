@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Plugin wrapper around skills/cairn/scripts/cs-hook-postool.
+#
+# Translates the plugin's userConfig values (exported as
+# $CLAUDE_PLUGIN_OPTION_<KEY>) into the env vars the existing skill scripts
+# already understand, then execs the real hook script. Shell env always wins
+# — userConfig is only the fallback. Legacy install.sh users keep whatever
+# they set in ~/.claude/settings.json.
+#
+# Reads hook-event JSON on stdin and re-emits it to the real script unchanged.
+
+set -euo pipefail
+
+# Rater backend: shell env wins. Otherwise derive from userConfig boolean:
+# use_api_backend=true → api; otherwise → claude-cli.
+if [[ -z "${CAIRN_RATER_BACKEND:-}" ]]; then
+  if [[ "${CLAUDE_PLUGIN_OPTION_USE_API_BACKEND:-false}" == "true" ]]; then
+    export CAIRN_RATER_BACKEND="api"
+  else
+    export CAIRN_RATER_BACKEND="claude-cli"
+  fi
+fi
+
+# Anthropic API key (api backend only): shell env → userConfig.
+# Only inject from userConfig if shell env is unset, so a user with
+# ANTHROPIC_API_KEY exported in their shell wins over a stale stored value.
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -n "${CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY:-}" ]]; then
+  export ANTHROPIC_API_KEY="$CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY"
+fi
+
+# Rating cadence: shell env → userConfig → 1 (rate every call).
+export CAIRN_HOOK_CADENCE="${CAIRN_HOOK_CADENCE:-${CLAUDE_PLUGIN_OPTION_RATING_CADENCE:-1}}"
+
+# Rater model: shell env → userConfig → cs-judge-and-rate's own default
+# (claude-haiku-4-5-20251001). Sanity-check the userConfig value: if it
+# doesn't start with "claude-" it's probably a typo, fall back to default
+# silently. The api/claude-cli backends would otherwise fail at request
+# time and the user wouldn't see the error until checking ~/.cairn/hook.log.
+if [[ -z "${CAIRN_RATER_MODEL:-}" && -n "${CLAUDE_PLUGIN_OPTION_RATER_MODEL:-}" ]]; then
+  if [[ "$CLAUDE_PLUGIN_OPTION_RATER_MODEL" == claude-* ]]; then
+    export CAIRN_RATER_MODEL="$CLAUDE_PLUGIN_OPTION_RATER_MODEL"
+  fi
+  # else: don't export; cs-judge-and-rate's built-in default kicks in
+fi
+
+# Locate the real script. $CLAUDE_PLUGIN_ROOT is exported by Claude Code; fall
+# back to a relative resolution if invoked outside a plugin context (testing).
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+REAL="$PLUGIN_ROOT/skills/cairn/scripts/cs-hook-postool"
+
+exec "$REAL" "$@"

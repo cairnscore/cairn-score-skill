@@ -64,10 +64,41 @@ echo "  dest:     $DEST"
 echo "  settings: $SETTINGS"
 echo
 
+# Detect an existing cairn plugin install — the plugin and install.sh both
+# register hooks, and Claude Code does NOT dedupe by command path. Running both
+# means every tool call gets rated twice (~2x rater cost + duplicate queue
+# events). Warn loudly, but proceed if the user insists (some testing flows
+# want both side-by-side).
+PLUGIN_DIRS=("$HOME/.claude/plugins" "$HOME/.config/claude/plugins")
+for pdir in "${PLUGIN_DIRS[@]}"; do
+  if [[ -d "$pdir" ]] && grep -rl '"name"[[:space:]]*:[[:space:]]*"cairn"' "$pdir" --include='plugin.json' 2>/dev/null | grep -q .; then
+    echo "install.sh: ⚠  detected a Claude Code plugin install of cairn under $pdir"
+    echo "  Running install.sh in addition to the plugin will register the"
+    echo "  hooks TWICE — every tool call will be rated twice, doubling rater"
+    echo "  cost and queueing duplicate ratings."
+    echo
+    echo "  Recommended: uninstall the plugin OR don't run this installer."
+    echo "    /plugin uninstall cairn       # in Claude Code"
+    echo
+    if [[ -z "${CAIRN_INSTALL_FORCE:-}" ]]; then
+      printf "  Continue anyway? [y/N]: "
+      read -r ANSWER
+      case "$ANSWER" in
+        y|Y|yes) echo "  proceeding (you asked for it)…"; echo ;;
+        *)       echo "  aborting. Run with CAIRN_INSTALL_FORCE=1 to skip this prompt." >&2; exit 1 ;;
+      esac
+    else
+      echo "  CAIRN_INSTALL_FORCE=1 set — proceeding."
+      echo
+    fi
+    break
+  fi
+done
+
 # Copy skill files into place (unless source == dest, e.g. re-running in place).
 # Skill content (SKILL.md, references/, scripts/, installer scripts) lives
-# alongside this script in skill/. README.md and LICENSE live one level up at
-# the repo root; copy them in too if present so the installed dir is browsable.
+# alongside this script in skills/cairn/. README.md and LICENSE live two levels
+# up at the repo root; copy them in too if present so the installed dir is browsable.
 if [[ "$SRC" != "$DEST" ]]; then
   mkdir -p "$DEST"
   for item in SKILL.md references scripts install.sh uninstall.sh update-skill.sh; do
@@ -76,8 +107,8 @@ if [[ "$SRC" != "$DEST" ]]; then
     fi
   done
   for item in README.md LICENSE; do
-    if [[ -e "$SRC/../$item" ]]; then
-      cp "$SRC/../$item" "$DEST/"
+    if [[ -e "$SRC/../../$item" ]]; then
+      cp "$SRC/../../$item" "$DEST/"
     fi
   done
   echo "  copied skill files → $DEST"
@@ -212,18 +243,27 @@ def add_postool(event):
 add_postool("PostToolUse")
 add_postool("PostToolUseFailure")
 
-stop_entries = hooks.setdefault("Stop", [])
-if not already_has(stop_entries, flush_cmd):
-    stop_entries.append({
-        "hooks": [{
-            "type": "command",
-            "command": flush_cmd,
-            "timeout": 30,
-        }],
-    })
-    print(f"  registered Stop hook → {flush_cmd}")
-else:
-    print("  Stop hook already registered (skipping)")
+def add_flush_hook(event):
+    entries = hooks.setdefault(event, [])
+    if not already_has(entries, flush_cmd):
+        entries.append({
+            "hooks": [{
+                "type": "command",
+                "command": flush_cmd,
+                "timeout": 30,
+            }],
+        })
+        print(f"  registered {event} hook → {flush_cmd}")
+    else:
+        print(f"  {event} hook already registered (skipping)")
+
+# Stop fires per-turn (when Claude finishes responding) — bounds queue size
+# in long sessions. SessionEnd fires on /exit, /clear, logout, etc. — catches
+# events queued by the async rater AFTER the last per-turn Stop. Both are
+# needed: a single rater dispatch can finish AFTER Stop has already fired,
+# leaving the event stranded until SessionEnd drains it on session teardown.
+add_flush_hook("Stop")
+add_flush_hook("SessionEnd")
 
 with open(settings_path, "w") as f:
     json.dump(data, f, indent=2)
@@ -242,7 +282,7 @@ if [[ "$DESKTOP" -eq 1 ]]; then
   echo
   echo "--- Desktop MCP registration (--desktop) ---"
 
-  MCP_DIR="$SRC/../mcp-server"
+  MCP_DIR="$SRC/../../mcp-server"
   if [[ ! -f "$MCP_DIR/server.py" ]]; then
     echo "install.sh: --desktop requires running from the cloned repo where" >&2
     echo "  $MCP_DIR/server.py exists. Re-runs from the installed location" >&2

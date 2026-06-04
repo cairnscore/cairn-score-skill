@@ -12,7 +12,7 @@ Sandbox-runnable steps were exercised end-to-end before this checklist landed in
 
 | Bug | Where | Fix |
 |---|---|---|
-| `uninstall.sh` left `CAIRN_RATER_BACKEND` env entry in `~/.claude/settings.json` | `skill/uninstall.sh` | Now strips the env entry along with the hooks |
+| `uninstall.sh` left `CAIRN_RATER_BACKEND` env entry in `~/.claude/settings.json` | `skills/cairn/uninstall.sh` | Now strips the env entry along with the hooks |
 | `mcpb pack` rejected our `manifest.json` (`prompts.0.text: Required` — static prompts need inline text, can't just point at the runtime `@mcp.prompt`) | `mcp-server/manifest.json` | Switched to `prompts_generated: true` — runtime registration via the MCP protocol still serves the `cairn-proactive` prompt; the install UI just won't show it statically. Future-work: extract prompt text into a shared source-of-truth file and embed in both `server.py` + the manifest. |
 | `build-mcpb.sh` required `mcpb` to be globally installed (`npm i -g`) | `mcp-server/build-mcpb.sh` | Now falls back to `npx -y --package @anthropic-ai/mcpb mcpb …` so no global install needed |
 
@@ -77,7 +77,7 @@ Everything else (install / verify state / teardown commands) is now known to wor
 - [X] **Reset** (re-run the clean-slate block above if needed)
 - [X] Run installer
   ```bash
-  bash /Users/gusellerm/Projects/cairn-score-skill/skill/install.sh
+  bash /Users/gusellerm/Projects/cairn-score-skill/skills/cairn/install.sh
   ```
 - [X] When prompted, pick `2` for `claude-cli` backend (or `1` + provide an Anthropic API key if you prefer the API backend)
 - [X] Installer prints `Installed (Claude Code skill).`
@@ -128,7 +128,7 @@ Everything else (install / verify state / teardown commands) is now known to wor
 - [X] **Reset** (from pre-flight block)
 - [X] Run unified installer
   ```bash
-  bash /Users/gusellerm/Projects/cairn-score-skill/skill/install.sh --desktop
+  bash /Users/gusellerm/Projects/cairn-score-skill/skills/cairn/install.sh --desktop
   ```
 - [X] Pick backend as before
 - [X] Installer prints `registered → mcpServers.cairn` with absolute `uv` path
@@ -281,9 +281,9 @@ Everything else (install / verify state / teardown commands) is now known to wor
 
 - [X] Rebuild from current source
   ```bash
-  cd /Users/gusellerm/Projects/cairn-score-skill/skill && \
-    rm -f ../dist/cairn-skill.zip && \
-    zip -r ../dist/cairn-skill.zip SKILL.md references/rubric.md references/examples.md references/queries.md references/scoring-model.md
+  cd /Users/gusellerm/Projects/cairn-score-skill/skills/cairn && \
+    rm -f ../../dist/cairn-skill.zip && \
+    zip -r ../../dist/cairn-skill.zip SKILL.md references/rubric.md references/examples.md references/queries.md references/scoring-model.md
   ```
 
 ### Install
@@ -312,7 +312,7 @@ Everything else (install / verify state / teardown commands) is now known to wor
 - [X] **Reset** (from pre-flight block)
 - [X] Install both via the unified command
   ```bash
-  bash /Users/gusellerm/Projects/cairn-score-skill/skill/install.sh --desktop
+  bash /Users/gusellerm/Projects/cairn-score-skill/skills/cairn/install.sh --desktop
   ```
 - [X] Pick backend, restart Desktop, restart Code session
 

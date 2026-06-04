@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for scripts/cs-sanitize-rating.
 
-Run: python3 skill/tests/test_cs_sanitize_rating.py
+Run: python3 skills/cairn/tests/test_cs_sanitize_rating.py
 
 The sanitizer reads one /v1/scores rating object as JSON on stdin and:
   - salvages free-text fields (rationale, task) when a rater drifted into

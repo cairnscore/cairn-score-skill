@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# PostToolUse / PostToolUseFailure hook.
+# Reads Claude Code hook-input JSON on stdin, extracts the external resource
+# involved (URL / MCP server / etc.), constructs a briefing, and feeds it to
+# scripts/cs-judge-and-rate. The rater queues a /v1/scores body via cs-rate;
+# the queue is flushed by the Stop hook (also wired in settings.json or the
+# plugin's hooks.json).
+#
+# Tools handled:
+#   WebFetch     → data_source = URL
+#   WebSearch    → capability  = tool://web-search
+#   mcp__*       → capability  = mcp://<server>
+#   Bash         → data_source = first URL found in the command (curl/wget/etc.)
+#                  (skipped if no URL — Bash is matched broadly for coverage)
+#
+# Anything else is silently skipped.
+#
+# Privacy / safety knobs (env):
+#   CAIRN_HOOK_ENABLED          — "0" / "false" / "no" disables this hook silently
+#                                  (default: enabled).
+#   CAIRN_HOOK_HOSTS_DENYLIST   — comma-separated substrings. If the extracted
+#                                  URL or external_id contains any of them, the
+#                                  event is skipped (no briefing leaves the
+#                                  machine). Substring match — use ports/paths
+#                                  to scope precisely (e.g.
+#                                  "internal.corp,localhost:5432,vault.").
+#
+# Credentials in tool inputs / responses (Authorization headers, Bearer tokens,
+# ?api_key=…, X-*-Token headers, etc.) are redacted before the briefing is
+# constructed — see _redact() below.
+#
+# Designed for `async: true` invocation so the agent never waits on this. The
+# rater is spawned detached; errors land in $HOME/.cairn/hook.log (mode 0600,
+# rotated at 1MB) — the agent's conversation is never touched.
+
+set -euo pipefail
+
+# Recursion guard: if a rater-spawned Claude Code session somehow triggers our
+# hooks (shouldn't happen with --tools "", but belt-and-suspenders), bail out.
+[[ "${CAIRN_NESTED:-}" == "1" ]] && exit 0
+
+# Opt-out: respect CAIRN_HOOK_ENABLED if explicitly disabled.
+case "${CAIRN_HOOK_ENABLED:-}" in
+  0|false|no|off) exit 0 ;;
+esac
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_DIR="$HOME/.cairn"
+LOG="$LOG_DIR/hook.log"
+
+# Create LOG_DIR with restrictive perms (briefing fragments may leak into the
+# log via rater stderr on parse failure — keep readable only by the owner).
+( umask 077 && mkdir -p "$LOG_DIR" )
+chmod 700 "$LOG_DIR" 2>/dev/null || true
+
+# Rotate hook.log at 1MB to bound disk usage and any incidental leakage.
+if [[ -f "$LOG" ]]; then
+  size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' ')
+  if [[ ${size:-0} -gt 1048576 ]]; then
+    [[ -f "$LOG.1" ]] && mv -f "$LOG.1" "$LOG.2"
+    mv -f "$LOG" "$LOG.1"
+  fi
+fi
+
+INPUT=$(cat)
+
+BRIEFING=$(
+  SKILL_DIR="$SKILL_DIR" \
+  INPUT="$INPUT" \
+  HOSTS_DENYLIST="${CAIRN_HOOK_HOSTS_DENYLIST:-}" \
+  python3 <<'PY'
+import os, sys, json, re
+
+raw = os.environ.get("INPUT") or ""
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)  # silent: bad input, nothing to rate
+
+tool_name = data.get("tool_name") or ""
+tool_input = data.get("tool_input") or {}
+tool_response = data.get("tool_response") or {}
+
+# Rating cadence: rate 1-in-N tool calls (per-session). Cheaper for users
+# who burn through hundreds of tool calls and don't need every single one
+# rated. Counter is per-session_id (resets each Claude Code session), so
+# even heavy sessions get proportional coverage. 1 = rate every call.
+try:
+    _cadence = max(1, int(os.environ.get("CAIRN_HOOK_CADENCE", "1")))
+except ValueError:
+    _cadence = 1
+
+if _cadence > 1:
+    import fcntl
+    _session_id = data.get("session_id") or "no-session"
+    # Sanitize for filesystem path (claude code uses uuid-ish ids; belt-and-suspenders).
+    _safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", _session_id)[:64]
+    _counter_dir = os.path.expanduser("~/.cairn/counters")
+    os.makedirs(_counter_dir, mode=0o700, exist_ok=True)
+    _counter_path = os.path.join(_counter_dir, f"{_safe_sid}.count")
+    _lock_path = _counter_path + ".lock"
+    # Atomic read-increment-write under fcntl. The lock file is created with
+    # umask 077 → 0600, matching the rest of ~/.cairn/.
+    _old_umask = os.umask(0o077)
+    try:
+        with open(_lock_path, "a+") as _lf:
+            fcntl.flock(_lf.fileno(), fcntl.LOCK_EX)
+            try:
+                with open(_counter_path) as _cf:
+                    _count = int((_cf.read().strip() or "0"))
+            except (FileNotFoundError, ValueError):
+                _count = 0
+            _count += 1
+            with open(_counter_path, "w") as _cf:
+                _cf.write(str(_count))
+    finally:
+        os.umask(_old_umask)
+    # 1-indexed: rate call #1, then call #(1+N), #(1+2N), etc. So cadence=4
+    # rates calls 1, 5, 9, ... and skips 2, 3, 4, 6, 7, 8, ...
+    if (_count - 1) % _cadence != 0:
+        sys.exit(0)
+
+# Credential redaction. Applied to any string field that might surface in the
+# briefing (tool_input + tool_response after JSON-stringify). Catches the
+# common shapes a security-conscious reviewer would expect:
+#   Authorization: Bearer XXX
+#   X-Api-Key: XXX, X-Auth-Token: XXX, etc.
+#   ?api_key=XXX, ?token=XXX, &access_token=XXX
+#   "api_key": "XXX" inside JSON
+_REDACTORS = [
+    # Authorization header (Bearer, Basic, custom schemes) — match the full value
+    # up to the next quote / comma / newline / closing brace.
+    (re.compile(r"(Authorization\s*[:=]\s*)[^\"'\n,}]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # X-*-Key, X-*-Token, X-*-Auth, X-*-Secret headers — same termination.
+    (re.compile(r"(X-[A-Za-z0-9-]*(?:key|token|auth|secret)[A-Za-z0-9-]*\s*[:=]\s*)[^\"'\n,}]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # URL query params.
+    (re.compile(r"([?&](?:api[_-]?key|access[_-]?token|auth[_-]?token|token|key|secret|password|passwd)=)[^&\s'\"<>]+", re.IGNORECASE), r"\1[REDACTED]"),
+    # JSON-shape headers / keys: "Authorization": "...", "api_key": "...", etc.
+    (re.compile(r'("(?:Authorization|api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password)"\s*:\s*")[^"]*"', re.IGNORECASE), r'\1[REDACTED]"'),
+]
+
+def _redact(s):
+    if not isinstance(s, str):
+        return s
+    for pattern, repl in _REDACTORS:
+        s = pattern.sub(repl, s)
+    return s
+
+# Hosts denylist (substring match on URL / external_id).
+_denylist = [h.strip() for h in (os.environ.get("HOSTS_DENYLIST") or "").split(",") if h.strip()]
+
+def _denied(s):
+    return any(d in s for d in _denylist) if _denylist else False
+
+entity = None
+task = None
+
+if tool_name == "WebFetch":
+    url = tool_input.get("url")
+    if url:
+        if _denied(url):
+            sys.exit(0)
+        entity = {"type": "data_source", "external_id": url}
+        prompt = (tool_input.get("prompt") or "")[:120]
+        task = f"WebFetch {url}" + (f" — {prompt}" if prompt else "")
+
+elif tool_name == "WebSearch":
+    query = tool_input.get("query")
+    if query:
+        entity = {"type": "capability", "external_id": "tool://web-search"}
+        task = f"WebSearch: {query[:200]}"
+
+elif tool_name.startswith("mcp__"):
+    parts = tool_name.split("__", 2)
+    if len(parts) >= 2:
+        server = parts[1]
+        tool_part = parts[2] if len(parts) > 2 else "(unknown)"
+        ext_id = f"mcp://{server}"
+        if _denied(ext_id) or _denied(server):
+            sys.exit(0)
+        entity = {"type": "capability", "external_id": ext_id}
+        task = f"MCP call {server}.{tool_part}"
+
+elif tool_name == "Bash":
+    cmd = tool_input.get("command") or ""
+    # Only rate Bash commands that look like they're hitting the network — require a known
+    # network verb followed (somewhere) by a URL. Avoids false positives from commands
+    # that merely *mention* a URL in their text (echo, jq input, comments, etc.).
+    NET_VERB = r"\b(?:curl|wget|httpie|http|gh\s+api|gh\s+(?:pr|issue|run)\s+view|aws|gcloud|az|kubectl|psql|mysql|redis-cli|nc)\b"
+    m = re.search(NET_VERB + r".*?(https?://[^\s'\"<>)]+)", cmd, re.DOTALL)
+    if m:
+        url = m.group(1).rstrip(".,;)")
+        if _denied(url):
+            sys.exit(0)
+        entity = {"type": "data_source", "external_id": url}
+        # Truncate cmd preview AFTER redaction so credentials don't slip into the task line.
+        task = f"Bash network call ({url}): {_redact(cmd)[:120]}"
+
+if entity is None:
+    sys.exit(0)
+
+req_str_full = json.dumps(tool_input) if isinstance(tool_input, (dict, list)) else str(tool_input)
+resp_str_full = json.dumps(tool_response) if isinstance(tool_response, (dict, list)) else str(tool_response)
+original_request_bytes = len(req_str_full.encode("utf-8"))
+original_response_bytes = len(resp_str_full.encode("utf-8"))
+
+# Redact BEFORE truncation so a credential mid-string doesn't survive by being
+# pushed past the cap.
+req_str_full = _redact(req_str_full)
+resp_str_full = _redact(resp_str_full)
+
+REQ_CAP, RESP_CAP = 16000, 32000
+
+def _cap(s, n):
+    return s if len(s) <= n else s[:n] + "...[truncated]"
+
+req_str = _cap(req_str_full, REQ_CAP)
+resp_str = _cap(resp_str_full, RESP_CAP)
+
+err = tool_response.get("error") if isinstance(tool_response, dict) else None
+event = data.get("hook_event_name") or ""
+outcome = "failure" if (err or event == "PostToolUseFailure") else "success"
+
+briefing = {
+    "entity": entity,
+    "tool": tool_name,
+    "task": task,
+    "request": req_str,
+    "response": resp_str,
+    "original_request_bytes": original_request_bytes,
+    "original_response_bytes": original_response_bytes,
+    "outcome": outcome,
+    "direct_evidence": True,
+}
+
+print(json.dumps(briefing))
+PY
+)
+
+if [[ -z "$BRIEFING" ]]; then
+  exit 0
+fi
+
+# Create LOG with mode 0600 the first time we touch it.
+if [[ ! -e "$LOG" ]]; then
+  ( umask 077 && : > "$LOG" )
+fi
+chmod 600 "$LOG" 2>/dev/null || true
+
+# Spawn the rater detached: claude-cli rater can take ~20s, and even with
+# `async: true` in settings the hook process itself stays resident for that
+# whole time. `( ) & disown` lets the hook return immediately while the rater
+# continues in the background; output still lands in hook.log for diagnosis.
+(
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cs-hook-postool: dispatching briefing (async)"
+  echo "$BRIEFING" | "$SKILL_DIR/scripts/cs-judge-and-rate" 2>&1
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cs-hook-postool: rater exited $?"
+) >> "$LOG" 2>&1 &
+disown
