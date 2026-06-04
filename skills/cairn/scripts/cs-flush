@@ -21,12 +21,32 @@ command -v python3 >/dev/null || { echo "cs-flush: python3 required" >&2; exit 1
 [[ "${CAIRN_NESTED:-}" == "1" ]] && exit 0
 
 # Trace cs-flush invocations to hook.log so we can confirm Stop / SessionEnd
-# fired and whether the script ran to completion (vs being killed mid-flight
-# by Claude Code's process teardown).
+# fired and whether the script ran to completion. Tries to extract the
+# event name from the hook-input JSON on stdin (Claude Code passes
+# `hook_event_name` to every hook); falls back to "manual" when invoked
+# from a terminal (e.g. by cs-doctor) and "?" if stdin parsing fails.
 _LOG="$HOME/.cairn/hook.log"
 mkdir -p "$HOME/.cairn"
-echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cs-flush: invoked (trigger=${CAIRN_HOOK_EVENT:-?}, pid=$$, queue_lines=$(wc -l < "${CAIRN_QUEUE:-$HOME/.cairn/queue.jsonl}" 2>/dev/null | tr -d ' ' || echo 0))" >> "$_LOG"
-trap 'echo "[$(date '"'"'+%Y-%m-%dT%H:%M:%S%z'"'"')] cs-flush: exit code=$?" >> "$_LOG"' EXIT
+
+_TRIGGER="manual"
+if [[ ! -t 0 ]]; then
+  _HOOK_INPUT=$(cat 2>/dev/null || echo "")
+  if [[ -n "$_HOOK_INPUT" ]]; then
+    _TRIGGER=$(printf '%s' "$_HOOK_INPUT" | python3 -c 'import json,sys
+try:
+    print(json.loads(sys.stdin.read()).get("hook_event_name","?"))
+except Exception:
+    print("?")' 2>/dev/null || echo "?")
+  fi
+fi
+
+_QUEUE_PATH="${CAIRN_QUEUE:-$HOME/.cairn/queue.jsonl}"
+if [[ -f "$_QUEUE_PATH" ]]; then
+  _QUEUE_LINES=$(wc -l < "$_QUEUE_PATH" | tr -d ' ')
+else
+  _QUEUE_LINES=0
+fi
+echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] cs-flush: invoked (trigger=$_TRIGGER, pid=$$, queue_lines=$_QUEUE_LINES)" >> "$_LOG"
 
 : "${CAIRN_BASE_URL:=https://api.cairnscore.ai}"
 : "${CAIRN_QUEUE:=$HOME/.cairn/queue.jsonl}"
@@ -55,7 +75,9 @@ fi
 LOCK="${CAIRN_QUEUE}.lock"
 mkdir -p "$(dirname "$LOCK")"
 exec 9>"$LOCK"
-trap 'exec 9>&-' EXIT
+# Combined EXIT trap: capture exit code, release the lock fd, log completion.
+# Capture $? FIRST — anything in the trap body resets it.
+trap '_rc=$?; exec 9>&-; echo "[$(date '"'"'+%Y-%m-%dT%H:%M:%S%z'"'"')] cs-flush: exit code=$_rc" >> "$_LOG"' EXIT
 python3 -c 'import fcntl,sys; fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)' <&9
 
 [[ -s "$CAIRN_QUEUE" ]] || exit 0
