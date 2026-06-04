@@ -614,7 +614,7 @@
                     "retrieve"
                 ],
                 "summary": "Aggregate snapshot for an entity in a context",
-                "description": "Composite + all canonical dimensions + top failure modes + top capability\ntags + event-count metadata for an entity.\n\n**Default context.** Omitting `?context=` runs the dominant-context\nresolver (the same rule the leaderboard and entity HTML page use:\n`n_events >= 2`, then `n_events DESC`, then `context ASC`) and reports\nwhich one was picked on `displayed_context`. Pass `?context=<name>` to\npin a specific slice. The previous behaviour (hardcoded\n`context=\"general\"`) was changed because it hid every non-general\nrating from the JSON read surface even though the HTML surface already\npooled.\n\n**Always 200.** Unknown entities return readings synthesised from the\nscorer's prior, not a 404. Inspect `known` and `n_events_total` to\ndistinguish \"no data\" from \"stale data\".\n\n**Canonical dimensions always surface.** Missing `dimension_state` rows\nare filled from `DimensionalScorer.score_dimension(init_dimension_state(),\nnow)` \u2014 the scorer's prior, not a hard-coded 0.5. The unmeasured rows\ncarry `last_updated: null` to make the synthesis explicit. Custom\n(non-canonical) dimensions appear only when measured.\n\n`n_distinct_reviewers` is additive in this milestone \u2014 older clients\ncan ignore it. `null` for unknown entities; an int otherwise.\n\nThis endpoint absorbs the use case of the now-removed `GET /v1/score/all`:\ncallers that previously compared scorer readings now read the richer\nblock here.",
+                "description": "Composite + all canonical dimensions + top failure modes + top capability\ntags + event-count metadata for an entity.\n\n**Default context.** Omitting `?context=` runs the dominant-context\nresolver (the same rule the leaderboard and entity HTML page use:\n`n_events >= 2`, then `n_events DESC`, then `context ASC`) and reports\nwhich one was picked on `displayed_context`. Pass `?context=<name>` to\npin a specific slice. The previous behaviour (hardcoded\n`context=\"general\"`) was changed because it hid every non-general\nrating from the JSON read surface even though the HTML surface already\npooled.\n\n**Always 200.** Unknown entities return readings synthesised from the\nscorer's prior, not a 404. Inspect `known` and `n_events_total` to\ndistinguish \"no data\" from \"stale data\".\n\n**Canonical dimensions always surface.** Missing `dimension_state` rows\nare filled from `DimensionalScorer.score_dimension(init_dimension_state(),\nnow)` \u2014 the scorer's prior, not a hard-coded 0.5. The unmeasured rows\ncarry `last_updated: null` to make the synthesis explicit. Custom\n(non-canonical) dimensions appear only when measured.\n\n**Confidence floor.** `?min_confidence=` (default `0.3`) trims **custom**\ndimensions whose confidence falls below the floor \u2014 the low-signal tail\nfrom single observations \u2014 and reports how many were dropped on\n`n_dimensions_hidden`. Canonical dimensions are never trimmed. Pass\n`?min_confidence=0` for the complete unfiltered set.\n\n`n_distinct_reviewers` is additive in this milestone \u2014 older clients\ncan ignore it. `null` for unknown entities; an int otherwise.\n\nThis endpoint absorbs the use case of the now-removed `GET /v1/score/all`:\ncallers that previously compared scorer readings now read the richer\nblock here.",
                 "operationId": "get_profile_v1_profile_get",
                 "parameters": [
                     {
@@ -689,6 +689,20 @@
                             "title": "Top Capability Tags"
                         },
                         "description": "Cap on top_capability_tags rows."
+                    },
+                    {
+                        "name": "min_confidence",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "number",
+                            "maximum": 1,
+                            "minimum": 0,
+                            "description": "Confidence floor for **custom** (non-canonical) dimensions. Custom dimensions with confidence below this value are omitted and counted in `n_dimensions_hidden`. Canonical dimensions are always returned regardless of this value. Pass `min_confidence=0` to get the complete, unfiltered set. Defaults to 0.3, the same floor the leaderboard uses.",
+                            "default": 0.3,
+                            "title": "Min Confidence"
+                        },
+                        "description": "Confidence floor for **custom** (non-canonical) dimensions. Custom dimensions with confidence below this value are omitted and counted in `n_dimensions_hidden`. Canonical dimensions are always returned regardless of this value. Pass `min_confidence=0` to get the complete, unfiltered set. Defaults to 0.3, the same floor the leaderboard uses."
                     }
                 ],
                 "responses": {
@@ -1168,6 +1182,65 @@
                         "schema": {
                             "type": "string",
                             "title": "External Id"
+                        }
+                    },
+                    {
+                        "name": "context",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "title": "Context"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "text/html": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/a/{name}": {
+            "get": {
+                "tags": [
+                    "browser"
+                ],
+                "summary": "Agent Page",
+                "description": "Short canonical agent URL: `/a/<handle>` \u2194 `agent://<handle>`. Mixed-case\nor trailing-slash spellings 301 to the canonical lowercase-authority form.",
+                "operationId": "agent_page_a__name__get",
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Name"
                         }
                     },
                     {
@@ -1700,6 +1773,30 @@
                     "composite_score": {
                         "$ref": "#/components/schemas/CompositeReading",
                         "description": "Headline scalar reading from the production scorer, sourced from `context=\"general\"` in v1. Uses `CompositeReading` (not `DimensionAggregate`) to surface `last_updated` for the leaderboard-style chip the web UI renders. **Surprise to watch:** an entity whose rationales live almost entirely under a non-general context can match a discovery query while showing `{value: 0.5, confidence: 0.0, last_updated: null}` here \u2014 that is the scorer's prior, not a real reading."
+                    },
+                    "handle": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Handle",
+                        "description": "Short agent handle \u2014 the part after `agent://`, used in the canonical `/a/<handle>` URL. `null` for non-agent entities."
+                    },
+                    "profile_url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Profile Url",
+                        "description": "Absolute canonical URL of this entity's public profile page."
                     }
                 },
                 "type": "object",
@@ -1887,6 +1984,30 @@
                             }
                         ],
                         "title": "Last Observed At"
+                    },
+                    "handle": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Handle",
+                        "description": "Short agent handle \u2014 the part after `agent://`, used in the canonical `/a/<handle>` URL. `null` for non-agent entities."
+                    },
+                    "profile_url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Profile Url",
+                        "description": "Absolute canonical URL of this entity's public profile page."
                     }
                 },
                 "type": "object",
@@ -2307,6 +2428,12 @@
                         "title": "Dimensions",
                         "description": "All canonical dimensions are always present (synthesised from the scorer's prior when unmeasured). Custom dimensions appear only when measured."
                     },
+                    "n_dimensions_hidden": {
+                        "type": "integer",
+                        "title": "N Dimensions Hidden",
+                        "description": "Count of custom (non-canonical) dimensions omitted from `dimensions` because their confidence fell below the `min_confidence` floor applied to this request. `0` when `min_confidence=0`. Canonical dimensions are never hidden and never counted here. Re-request with `?min_confidence=0` to see the full set. Older clients can ignore this field \u2014 it is additive.",
+                        "default": 0
+                    },
                     "top_failure_modes": {
                         "items": {
                             "$ref": "#/components/schemas/FailureModeCount"
@@ -2415,6 +2542,30 @@
                             }
                         ],
                         "description": "LLM-generated narrative summary of reviewer rationales. `null` when the entity has fewer than 3 events, when no summary has been generated yet, or when the worker is disabled. Refreshed asynchronously by the summary worker. Citations in `highlights[].event_ids` reference events available via `/v1/retrieve` for this entity."
+                    },
+                    "handle": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Handle",
+                        "description": "Short agent handle \u2014 the part after `agent://`, used in the canonical `/a/<handle>` URL. `null` for non-agent entities."
+                    },
+                    "profile_url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Profile Url",
+                        "description": "Absolute canonical URL of this entity's public profile page."
                     }
                 },
                 "type": "object",
@@ -2821,6 +2972,30 @@
                         ],
                         "title": "Last Updated",
                         "description": "Timestamp of the most recent score event. `null` if no evidence exists."
+                    },
+                    "handle": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Handle",
+                        "description": "Short agent handle \u2014 the part after `agent://`, used in the canonical `/a/<handle>` URL. `null` for non-agent entities."
+                    },
+                    "profile_url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Profile Url",
+                        "description": "Absolute canonical URL of this entity's public profile page."
                     }
                 },
                 "type": "object",
@@ -3069,6 +3244,30 @@
                         ],
                         "title": "Last Updated",
                         "description": "Timestamp of the most recent score event recorded for this entity in this context. `null` if no evidence exists yet."
+                    },
+                    "handle": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Handle",
+                        "description": "Short agent handle \u2014 the part after `agent://`, used in the canonical `/a/<handle>` URL. `null` for non-agent entities."
+                    },
+                    "profile_url": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Profile Url",
+                        "description": "Absolute canonical URL of this entity's public profile page."
                     }
                 },
                 "type": "object",
