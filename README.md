@@ -6,11 +6,13 @@ This repo wires Cairn into Claude. Pick the install path that matches how you us
 
 | If you use… | You get | One-line install |
 |---|---|---|
-| **Claude Code** (CLI) | Background rating of every tool call. Invisible to the model; ratings happen automatically via `PostToolUse` hooks. Highest signal density. | `bash skills/cairn/install.sh` |
+| **Claude Code** (CLI) | Background rating of every tool call. Invisible to the model; ratings happen automatically via `PostToolUse` hooks. Highest signal density. | `/plugin marketplace add cairnscore/cairn-marketplace` → `/plugin install cairn` |
 | **Claude Desktop** (app) | Ten MCP tools (`score`, `rate`, `discover`, `profile`, …) the model calls when relevant. Tool invocations are visible in chat. | Double-click `dist/cairn.mcpb` |
 | **claude.ai** (web) | The skill loads via claude.ai's router and primes Claude to call Cairn endpoints via `curl`. No local install. | Upload `dist/cairn-skill.zip` at Settings → Capabilities → Skills |
 
-All three coexist. The Code skill and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity. The unified installer (`bash skills/cairn/install.sh --desktop`) sets up Code + Desktop in one command.
+All three coexist. The Code plugin and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity.
+
+> **⚠ Cost disclosure (Claude Code).** The plugin rates every `WebFetch` / `WebSearch` / `mcp__*` / network-bound `Bash` call. With the default `claude-cli` rater, this bills your **claude.ai subscription** at roughly **$0.02–0.07 per rating** (~20s, no API key needed). A heavy session — 100 tool calls/day — runs ~$2–7/day. Set `CAIRN_RATER_BACKEND=api` with an `ANTHROPIC_API_KEY` to drop to ~$0.0003/rating. Opt out per-host with `CAIRN_HOOK_HOSTS_DENYLIST` or fully with `CAIRN_HOOK_ENABLED=0`. See [Data flow & privacy](#data-flow--privacy) below.
 
 ---
 
@@ -38,6 +40,32 @@ All subsequent installs reuse this key, so every rating attributes to your chose
 
 ## Install path 1 — Claude Code
 
+### Recommended: install as a plugin
+
+```bash
+# In a Claude Code session:
+/plugin marketplace add cairnscore/cairn-marketplace
+/plugin install cairn@cairn-marketplace
+```
+
+Then **start a fresh Claude Code session** — hooks load at session start, so the session you installed from will not see them.
+
+The plugin registers PostToolUse + PostToolUseFailure + Stop hooks (matcher `WebFetch|WebSearch|Bash|mcp__.*`), exposes the 10 MCP tools (`score`, `profile`, `rate`, etc.), and prints a one-line status banner at every session start so silent-failure modes (rater not configured, `uv` missing) become visible immediately.
+
+**Default rater backend** is `claude-cli` — works for anyone logged into Claude Code, no API key required. To switch to the cheaper `api` backend, export `CAIRN_RATER_BACKEND=api` plus `ANTHROPIC_API_KEY` (or write the key to `~/.cairn/anthropic-key`, mode 0600). See [Data flow & privacy](#data-flow--privacy) for the full cost / privacy story.
+
+**Verify:**
+```bash
+bash ~/.claude/plugins/.../skills/cairn/scripts/cs-doctor
+# (path varies by Claude Code version; the SessionStart banner shows status too)
+```
+
+Update later: `/plugin marketplace update cairn-marketplace` (Claude Code auto-updates by default for community marketplaces; toggle in `/plugin` → Marketplaces tab).
+
+### Alternative: clone and `install.sh` (legacy / advanced)
+
+For users who want to install without using the plugin system — useful for forking, contributing, or pinning to a specific commit:
+
 ```bash
 git clone https://github.com/cairnscore/cairn-score-skill.git ~/code/cairn-score-skill
 bash ~/code/cairn-score-skill/skills/cairn/install.sh
@@ -47,12 +75,12 @@ The installer prompts for a rater backend:
 
 | Backend | How it auths | Cost / latency per rating | Best for |
 |---|---|---|---|
-| `api` | Anthropic API key from `console.anthropic.com` | ~$0.001 / ~2s | Heavy use; you have an API key |
+| `api` | Anthropic API key from `console.anthropic.com` | ~$0.0003 / ~2s | Heavy use; you have an API key |
 | `claude-cli` | Reuses Claude Code's existing claude.ai login | ~$0.02–0.07 (subscription-billed) / ~20s | Light use; no extra setup |
 
-Then **start a fresh Claude Code session** — hooks load at session start, so the session you ran the installer from will not see them. (`/hooks` opens a TUI picker, it does not reload settings; a fresh session is the actual reload.)
+Then **start a fresh Claude Code session** to load the hooks. Every WebFetch / WebSearch / MCP tool / `curl`-like Bash call now gets rated silently in the background; queued events flush to Cairn when the session ends.
 
-Every WebFetch / WebSearch / MCP tool / `curl`-like Bash call now gets rated silently in the background; queued events flush to Cairn when the session ends.
+**⚠ If you also installed the plugin,** `install.sh` will detect that and warn you — running both registers hooks twice (doubled rater cost, duplicate queue entries). Pick one path. The installer will prompt before proceeding; set `CAIRN_INSTALL_FORCE=1` to skip the prompt.
 
 **Verify:**
 ```bash
@@ -73,9 +101,9 @@ cs-doctor — cairn install diagnostic
 ✓ all checks passed
 ```
 
-The two ⚠ lines are expected for a clean install — the key file is **lazy-minted** (only appears after your first rated tool call), and `last flush` warns until the first session ends. Both clear to ✓ on their own after one rated session.
+The two ⚠ lines are expected for a clean install — the key file is **lazy-minted** (only appears after your first rated tool call), and `last flush` warns until the first session ends.
 
-**Non-interactive install** (for scripts / CI / AI agents): set `CAIRN_RATER_BACKEND=api|claude-cli` in env to skip the backend prompt. For the `api` backend, set `ANTHROPIC_API_KEY` in env to skip the secret prompt. Example:
+**Non-interactive install** (for scripts / CI / AI agents): set `CAIRN_RATER_BACKEND=api|claude-cli` in env. For the `api` backend, set `ANTHROPIC_API_KEY` in env to skip the secret prompt. Example:
 
 ```bash
 CAIRN_RATER_BACKEND=claude-cli bash ~/code/cairn-score-skill/skills/cairn/install.sh
@@ -168,6 +196,44 @@ claude.ai enforces `description ≤ 1024 chars` on the SKILL.md frontmatter — 
 
 ---
 
+## Data flow & privacy
+
+When the auto-rating hook fires on a tool call, here's exactly what leaves the machine and where it goes:
+
+| Data | Destination | Cap | When |
+|---|---|---|---|
+| Tool input (URL, query, MCP args, Bash command body) | The rater — `api.anthropic.com` (api backend) or your local `claude -p` subprocess (claude-cli) | 16KB | Per tool call matching `WebFetch \| WebSearch \| Bash \| mcp__.*` |
+| Tool response (page body, query results, MCP output) | Same | 32KB | Same |
+| Rating (score, rationale, dimensions) | `api.cairnscore.ai/v1/scores/batch` | — | Flushed when the session ends (Stop hook) |
+| Reviewer identity | `api.cairnscore.ai/v1/keys` (mint), attached to every rating | — | Once per `~/.cairn/keys/<host>.key` (default: anonymous `agent://anon/<uuid>`) |
+| Product feedback (`cs-feedback`) | `api.cairnscore.ai/v1/feedback` | 4KB | When invoked by the agent |
+
+**Credential redaction.** Before any briefing is sent to the rater, `cs-hook-postool` strips: `Authorization:` header values (Bearer, Basic, custom schemes), `X-*-Key` / `X-*-Token` / `X-*-Auth` / `X-*-Secret` headers, URL query params (`api_key`, `access_token`, `token`, `key`, `secret`, `password`), and JSON keys with those names. The redaction is best-effort — review the rater output in `~/.cairn/hook.log` if you suspect a leak, and use the denylist below to scope-out hosts that handle credentials.
+
+**Local state.** All under `~/.cairn/`, directory mode 0700, files mode 0600:
+
+| File | Contents |
+|---|---|
+| `queue.jsonl` | Pending ratings (deleted on successful flush) |
+| `keys/<host>.key` | Your Cairn API key (lazy-minted on first write) |
+| `anthropic-key` | Your Anthropic API key (only with `api` backend, only if you supplied one) |
+| `hook.log` | Diagnostic log, rotated at 1MB (keeps `hook.log.1`, `hook.log.2`) |
+| `last-flush` | Sentinel timestamp from the most recent successful flush |
+
+**Opt-out knobs.** Set in your shell env (or `~/.claude/settings.json` env block for legacy installs):
+
+| Env var | Effect |
+|---|---|
+| `CAIRN_HOOK_ENABLED=0` | Disable the auto-rating hook entirely. MCP tools still work; only the background loop stops. |
+| `CAIRN_HOOK_HOSTS_DENYLIST="internal.corp,vault.,localhost:5432"` | Comma-separated substring list. Skip the briefing if the URL / MCP server name contains any of them. Use to scope-out credential-handling hosts before the redaction layer is asked to do its work. |
+| `CAIRN_RATER_BACKEND=api\|claude-cli` | Pick rater backend. Plugin path defaults to `claude-cli`; `install.sh` lets you choose at install time. |
+
+**Third parties.** The `api` rater backend sends briefings to `api.anthropic.com`, so the Anthropic ToS applies to that traffic. The `claude-cli` backend keeps traffic on the same Anthropic surface as your normal Claude Code usage. Ratings go to `api.cairnscore.ai` regardless.
+
+**Privacy policy.** See https://cairnscore.ai/privacy (tracking issue [#7](https://github.com/cairnscore/cairn-score-skill/issues/7); the page is being authored — open the issue to see the data-flow items it must cover).
+
+---
+
 ## Configuration
 
 The defaults work out of the box. Override when you need to:
@@ -176,9 +242,12 @@ The defaults work out of the box. Override when you need to:
 |---|---|---|
 | `CAIRN_BASE_URL` | Cairn deployment URL. Override to point at a local dev server (`http://localhost:8000`) or a different deployment. | `https://api.cairnscore.ai` |
 | `CAIRN_DEBUG_LOG` | When set, every request/response writes to this file as JSONL (mode 0o600). Use for debugging why a call didn't behave. | unset |
-| `CAIRN_RATER_BACKEND` | `api` or `claude-cli` (Code skill only). Pick at install; set in env to override per-session. | (set by install) |
+| `CAIRN_RATER_BACKEND` | `api` or `claude-cli` (Code only). Plugin path defaults to `claude-cli`; `install.sh` lets you choose at install time. Set in env to override per-session. | `claude-cli` (plugin) / install-time (legacy) |
+| `CAIRN_HOOK_ENABLED` | Set to `0`/`false`/`no`/`off` to disable the auto-rating hook entirely. MCP tools still work; only the background loop stops. | enabled |
+| `CAIRN_HOOK_HOSTS_DENYLIST` | Comma-separated substring list. Skip the briefing if the URL / MCP server name contains any of them. Use to scope-out credential-handling hosts. | unset |
+| `ANTHROPIC_API_KEY` | Used by the `api` rater backend. Auto-loaded from `~/.cairn/anthropic-key` (mode 0600) if set there. | unset |
 
-For Desktop `.mcpb` installs, set these via the installer UI's config form. For Code, they live in `~/.claude/settings.json`'s `env` block. For ad-hoc invocations, export them in your shell.
+For Desktop `.mcpb` installs, set these via the installer UI's config form. For Code (plugin), set in your shell env or `~/.claude/settings.json`'s `env` block. For Code (legacy `install.sh`), the installer writes them into `~/.claude/settings.json`. For ad-hoc invocations, export them in your shell.
 
 ---
 
@@ -200,7 +269,11 @@ For Desktop `.mcpb` installs, set these via the installer UI's config form. For 
 ## Uninstall
 
 ```bash
-# Code skill:
+# Code (plugin install): run in a Claude Code session
+#   /plugin uninstall cairn@cairn-marketplace
+#   (optional) /plugin marketplace remove cairn-marketplace
+
+# Code (legacy install.sh):
 bash ~/.claude/skills/cairn/uninstall.sh
 rm -rf ~/.claude/skills/cairn
 
@@ -214,7 +287,8 @@ rm -rf ~/.claude/skills/cairn
 # claude.ai skill:
 #   Settings → Capabilities → Skills → remove
 
-# Runtime state (key file, queue, hook log):
+# Runtime state (key file, queue, hook log) — note: /plugin uninstall
+# does NOT touch ~/.cairn/, so run this if you want a clean wipe:
 rm -rf ~/.cairn
 ```
 
@@ -228,9 +302,12 @@ bash docs/_reset-cairn-state.sh
 
 ## What's in this repo
 
-- `skills/cairn/` — Claude Code skill (`SKILL.md`, `references/`, wrapper scripts, installer)
+- `.claude-plugin/plugin.json` — Claude Code plugin manifest (installed via `/plugin marketplace add cairnscore/cairn-marketplace`)
+- `hooks/` — plugin-context hook wrappers: thin shims around `skills/cairn/scripts/cs-*` that inject `CAIRN_RATER_BACKEND=claude-cli` default, plus a `cs-session-start` banner script
+- `skills/cairn/` — the skill itself (`SKILL.md`, `references/`, wrapper scripts, legacy `install.sh`)
 - `mcp-server/` — Python MCP server + `.mcpb` packaging
-- `dist/` — built artifacts (gitignored; rebuilt by the commands above)
+- `scripts/release.sh` — coordinated release tooling (bump → build → tag → push → gh release)
+- `dist/` — built artifacts (gitignored; rebuilt by the release script)
 - `docs/` — test plan (`TEST-PLAN.md`), Desktop personalize text (`desktop-personalize.md`), and the reset utility (`_reset-cairn-state.sh`)
 
 ---
