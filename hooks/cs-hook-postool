@@ -11,8 +11,15 @@
 
 set -euo pipefail
 
-# Rater backend: shell env → userConfig → claude-cli default.
-export CAIRN_RATER_BACKEND="${CAIRN_RATER_BACKEND:-${CLAUDE_PLUGIN_OPTION_RATER_BACKEND:-claude-cli}}"
+# Rater backend: shell env wins. Otherwise derive from userConfig boolean:
+# use_api_backend=true → api; otherwise → claude-cli.
+if [[ -z "${CAIRN_RATER_BACKEND:-}" ]]; then
+  if [[ "${CLAUDE_PLUGIN_OPTION_USE_API_BACKEND:-false}" == "true" ]]; then
+    export CAIRN_RATER_BACKEND="api"
+  else
+    export CAIRN_RATER_BACKEND="claude-cli"
+  fi
+fi
 
 # Anthropic API key (api backend only): shell env → userConfig.
 # Only inject from userConfig if shell env is unset, so a user with

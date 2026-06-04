@@ -57,11 +57,11 @@ All subsequent installs reuse this key, so every rating attributes to your chose
 
 On install, Claude Code prompts for three settings:
 
-| Field | What | Default |
-|---|---|---|
-| **Rater backend** | `claude-cli` (uses your claude.ai subscription, no API key needed, ~$0.02-0.07/rating) or `api` (uses your Anthropic API key, ~$0.0003/rating). | `claude-cli` |
-| **Anthropic API key** | Required only if you picked `api`. Stored in the system keychain (sensitive). | empty |
-| **Rating cadence** | Rate 1-in-N tool calls per session. `1` = full coverage; `4` = ~4× cheaper but only ~25% of calls are rated. Counter resets each session. | `1` |
+| Field | Shape | What | Default |
+|---|---|---|---|
+| **Use Anthropic API for the rater?** | yes/no | **No** → uses your claude.ai subscription via the `claude` CLI (~$0.02-0.07/rating, no API key needed). **Yes** → uses your Anthropic API key for ~100× cheaper, ~10× faster rating (~$0.0003/rating). | **no** |
+| **Anthropic API key** | sensitive string | Required only if the toggle above is **yes**. Stored in the system keychain. | empty |
+| **Rating cadence** | number 1-100 | Rate 1-in-N tool calls per session. `1` = full coverage; `4` = ~4× cheaper but only ~25% of calls are rated. Counter resets each session. | `1` |
 
 Then **start a fresh Claude Code session** — hooks load at session start, so the session you installed from will not see them.
 

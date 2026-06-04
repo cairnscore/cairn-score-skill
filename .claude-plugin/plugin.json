@@ -11,16 +11,16 @@
   "license": "MIT",
   "keywords": ["trust", "reputation", "rating", "ai-safety", "anthropic", "cairn", "mcp"],
   "userConfig": {
-    "rater_backend": {
-      "type": "string",
-      "title": "Rater backend",
-      "description": "Which model rates your tool calls. 'claude-cli' uses your claude.ai subscription (~$0.02-0.07/rating, no API key needed). 'api' uses ANTHROPIC_API_KEY for ~100x cheaper rating (~$0.0003/rating, faster). Valid values: claude-cli, api.",
-      "default": "claude-cli"
+    "use_api_backend": {
+      "type": "boolean",
+      "title": "Use Anthropic API for the rater?",
+      "description": "Off (default): use your claude.ai subscription via the `claude` CLI — no API key needed, ~$0.02-0.07/rating, ~20s latency. On: use your Anthropic API key — ~$0.0003/rating (~100x cheaper), ~2s latency. Requires the API key field below.",
+      "default": false
     },
     "anthropic_api_key": {
       "type": "string",
-      "title": "Anthropic API key (only used with api backend)",
-      "description": "Your Anthropic API key from console.anthropic.com. Required only if rater_backend=api; ignored otherwise. Stored in the system keychain.",
+      "title": "Anthropic API key (only used if the toggle above is on)",
+      "description": "Your Anthropic API key from console.anthropic.com. Required only if the api-backend toggle is on; ignored otherwise. Stored in the system keychain (sensitive).",
       "sensitive": true
     },
     "rating_cadence": {

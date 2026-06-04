@@ -15,8 +15,16 @@ set -euo pipefail
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 CAIRN_DIR="$HOME/.cairn"
 
-# Resolve effective rater backend: shell env → userConfig → claude-cli default.
-backend="${CAIRN_RATER_BACKEND:-${CLAUDE_PLUGIN_OPTION_RATER_BACKEND:-claude-cli}}"
+# Resolve effective rater backend. Shell env wins; otherwise derive from
+# the userConfig boolean (use_api_backend). `auto` is honored if the user
+# set it explicitly in shell env.
+if [[ -n "${CAIRN_RATER_BACKEND:-}" ]]; then
+  backend="$CAIRN_RATER_BACKEND"
+elif [[ "${CLAUDE_PLUGIN_OPTION_USE_API_BACKEND:-false}" == "true" ]]; then
+  backend="api"
+else
+  backend="claude-cli"
+fi
 if [[ "$backend" == "auto" ]]; then
   if [[ -n "${ANTHROPIC_API_KEY:-}" || -n "${CLAUDE_PLUGIN_OPTION_ANTHROPIC_API_KEY:-}" ]]; then
     backend="api"
