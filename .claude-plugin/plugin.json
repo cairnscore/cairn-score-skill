@@ -23,6 +23,12 @@
       "description": "Your Anthropic API key from console.anthropic.com. Required only if the api-backend toggle is on; ignored otherwise. Stored in the system keychain (sensitive).",
       "sensitive": true
     },
+    "rater_model": {
+      "type": "string",
+      "title": "Rater model",
+      "description": "Which Claude model rates your tool calls. Default `claude-haiku-4-5-20251001` is cheap/fast (~$0.0003/rating with api backend) and plenty smart for rating. Other common values: `claude-sonnet-4-6` (~10x cost, more nuanced rationale), `claude-opus-4-8` (~100x cost, probably overkill for rating). Invalid model IDs cause rater failures silently logged to ~/.cairn/hook.log; check there if ratings stop accumulating.",
+      "default": "claude-haiku-4-5-20251001"
+    },
     "rating_cadence": {
       "type": "number",
       "title": "Rating cadence",
