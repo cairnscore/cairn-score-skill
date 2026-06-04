@@ -12,12 +12,15 @@ This repo wires Cairn into Claude. Pick the install path that matches how you us
 
 All three coexist. The Code plugin and Desktop MCP coordinate on a single key file (`~/.cairn/keys/<host>.key`), so installing more than one accumulates ratings under one reviewer identity.
 
-> **⚠ Cost disclosure (Claude Code).** The plugin rates every `WebFetch` / `WebSearch` / `mcp__*` / network-bound `Bash` call. With the default `claude-cli` rater, this bills your **claude.ai subscription** at roughly **$0.02–0.07 per rating** (~20s, no API key needed). A heavy session — 100 tool calls/day — runs ~$2–7/day.
+> **⚠ Cost / quota disclosure (Claude Code).** The plugin rates every `WebFetch` / `WebSearch` / `mcp__*` / network-bound `Bash` call. The billing model depends on which rater backend you pick:
 >
-> Four cost levers, in order of impact:
-> 1. **Set rating cadence** (1-in-N) at install or via `CAIRN_HOOK_CADENCE` env. Cadence 4 → ~25% of calls rated, ~4× cheaper. Higher = cheaper but less feedback to the corpus.
-> 2. **Switch backend** to `api` with `CAIRN_RATER_BACKEND=api` + `ANTHROPIC_API_KEY` — drops to ~$0.0003/rating (~100× cheaper than `claude-cli`).
-> 3. **Pick a cheaper rater model** via `CAIRN_RATER_MODEL` (default Haiku is already cheap; Sonnet/Opus are progressively pricier). Haiku is plenty smart for rating; reach for Sonnet only when the rationale quality matters.
+> - **`claude-cli` rater (default):** No additional dollar charges. Each rating consumes from your existing **claude.ai subscription's usage allowance** — the same rolling-window token budget that powers your normal Claude work. Heavy rating throughput chews through your allowance faster, throttling other Claude work until the window resets. Roughly each rating ≈ one ~30-second Claude turn against your quota.
+> - **`api` rater:** Real dollar charges to your Anthropic API account. ~**$0.0003/rating** with the default Haiku model. A heavy session — 100 tool calls/day — runs ~**$0.03/day** of actual money, but doesn't touch your subscription allowance.
+>
+> Four levers to manage cost / quota, in order of impact:
+> 1. **Set rating cadence** (1-in-N) at install or via `CAIRN_HOOK_CADENCE` env. Cadence 4 → ~25% of calls rated. Higher = lower cost / lighter quota draw, but less feedback to the corpus.
+> 2. **Switch backend** to `api` with `CAIRN_RATER_BACKEND=api` + `ANTHROPIC_API_KEY` — moves to direct billing (real $) and frees your subscription quota.
+> 3. **Pick a cheaper rater model** via `CAIRN_RATER_MODEL` (default Haiku is already cheap; Sonnet/Opus draw 10× / 100× more — applies on either backend). Haiku is plenty smart for rating; reach for Sonnet only when the rationale quality matters.
 > 4. **Scope out hosts** with `CAIRN_HOOK_HOSTS_DENYLIST=internal.corp,vault.,localhost`, or disable fully with `CAIRN_HOOK_ENABLED=0`.
 >
 > See [Data flow & privacy](#data-flow--privacy) below for the full story.
@@ -60,7 +63,7 @@ On install, Claude Code prompts for four settings:
 
 | Field | Shape | What | Default |
 |---|---|---|---|
-| **Use Anthropic API for the rater?** | yes/no | **No** → uses your claude.ai subscription via the `claude` CLI (~$0.02-0.07/rating, no API key needed). **Yes** → uses your Anthropic API key for ~100× cheaper, ~10× faster rating (~$0.0003/rating). | **no** |
+| **Use Anthropic API for the rater?** | yes/no | **No** → uses your claude.ai subscription via the `claude` CLI. No additional $ charged, but each rating consumes from your **subscription's usage allowance** (the same quota as normal Claude work). Heavy rating can throttle other Claude work. **Yes** → uses your Anthropic API key for direct per-call billing at ~$0.0003/rating. Real dollars, but doesn't touch your subscription. ~10× faster too. | **no** |
 | **Anthropic API key** | sensitive string | Required only if the toggle above is **yes**. Stored in the system keychain. | empty |
 | **Rater model** | string | Which Claude model judges tool calls. Cheap+fast is usually right for rating; the rationale doesn't need to be brilliant. `claude-haiku-4-5-20251001` (default), `claude-sonnet-4-6` (~10× cost), `claude-opus-4-8` (~100× cost, usually overkill). | `claude-haiku-4-5-20251001` |
 | **Rating cadence** | number 1-100 | Rate 1-in-N tool calls per session. `1` = full coverage; `4` = ~4× cheaper but only ~25% of calls are rated. Counter resets each session. | `1` |
@@ -93,7 +96,7 @@ The installer prompts for a rater backend:
 | Backend | How it auths | Cost / latency per rating | Best for |
 |---|---|---|---|
 | `api` | Anthropic API key from `console.anthropic.com` | ~$0.0003 / ~2s | Heavy use; you have an API key |
-| `claude-cli` | Reuses Claude Code's existing claude.ai login | ~$0.02–0.07 (subscription-billed) / ~20s | Light use; no extra setup |
+| `claude-cli` | Reuses Claude Code's existing claude.ai login | No extra $ — draws from your subscription's usage allowance / ~20s | Light use; no extra setup |
 
 Then **start a fresh Claude Code session** to load the hooks. Every WebFetch / WebSearch / MCP tool / `curl`-like Bash call now gets rated silently in the background; queued events flush to Cairn when the session ends.
 

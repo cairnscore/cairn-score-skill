@@ -5,11 +5,13 @@
 #
 # Two rater backends, picked at install (or per-session via CAIRN_RATER_BACKEND):
 #   "api"        — direct POST to api.anthropic.com (needs ANTHROPIC_API_KEY).
-#                  Cheap (~$0.0003/rating cached), fast (~2s). Best for heavy use.
+#                  Real $ charged per call (~$0.0003/rating cached), fast (~2s).
+#                  Doesn't touch your claude.ai subscription allowance.
 #   "claude-cli" — shell out to `claude -p`. Uses Claude Code's own auth (works
-#                  with claude.ai subscription). No API key needed.
-#                  More expensive (~$0.02-0.07/rating, subscription-billed), slower (~20s).
-#                  Best when you don't want to set up a separate API key.
+#                  with claude.ai subscription). No API key needed and no extra
+#                  $ — but each rating consumes from your subscription's usage
+#                  allowance, throttling other Claude work if you burn through
+#                  the rolling-window quota. Slower (~20s).
 #
 # Idempotent: safe to re-run. Existing settings are preserved.
 #
@@ -125,9 +127,11 @@ BACKEND="${CAIRN_RATER_BACKEND:-}"
 if [[ -z "$BACKEND" ]]; then
   echo "Pick a rater backend:"
   echo "  1) api        — direct Anthropic API, needs an API key from console.anthropic.com"
-  echo "                  ~\$0.0003/rating (cached), fast (~2s). Best for heavy use."
+  echo "                  Real \$ charged per call: ~\$0.0003/rating (cached), fast (~2s)."
+  echo "                  Doesn't touch your claude.ai subscription allowance."
   echo "  2) claude-cli — uses Claude Code's own auth (claude.ai subscription)."
-  echo "                  ~\$0.02–0.07/rating (subscription-billed), slower (~20s)."
+  echo "                  No extra \$ charged, but each rating draws from your subscription's"
+  echo "                  usage allowance (same quota as normal Claude work). Slower (~20s)."
   echo "                  No API key needed; recommended if you don't have one."
   if ! command -v claude >/dev/null; then
     echo

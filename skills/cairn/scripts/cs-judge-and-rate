@@ -20,11 +20,14 @@
 #
 # Backends (CAIRN_RATER_BACKEND; default "auto" picks based on what's available):
 #   "api"        — direct POST to api.anthropic.com (needs ANTHROPIC_API_KEY).
-#                  Cheap (~$0.0003/rating cached), fast (~2s). Best for heavy use.
+#                  Real $ charged per call (~$0.0003/rating cached), fast (~2s).
+#                  Best for heavy use; doesn't touch your subscription allowance.
 #   "claude-cli" — shell out to `claude -p`. Uses whatever auth Claude Code is
-#                  logged in with (claude.ai subscription works). No API key needed.
-#                  More expensive (~$0.02-0.07/rating, subscription-billed), slower (~20s).
-#                  Best for light/occasional use where API-key setup is unwanted.
+#                  logged in with (claude.ai subscription works). No API key
+#                  needed and no additional $ charged — but each rating consumes
+#                  from your subscription's usage allowance (same rolling-window
+#                  quota as normal Claude work). Slower (~20s). Best when you
+#                  don't want API-key setup and have headroom in your quota.
 #   "auto"       — api if ANTHROPIC_API_KEY available, else claude-cli.
 #
 # Environment:
@@ -225,8 +228,11 @@ if not rating:
 
 usage = wrap.get("usage") or {}
 cost = wrap.get("total_cost_usd") or 0
+# Note: the claude-cli backend doesn't actually charge $ — this is the
+# imputed API-equivalent cost. Real billing is your subscription's usage
+# allowance, which the input/cache_read/cache_write/out counts approximate.
 print(
-    f"cs-judge-and-rate[claude-cli]: cost=${cost:.4f} "
+    f"cs-judge-and-rate[claude-cli]: quota_equiv=${cost:.4f} "
     f"input={usage.get('input_tokens', 0)} "
     f"cache_read={usage.get('cache_read_input_tokens', 0)} "
     f"cache_write={usage.get('cache_creation_input_tokens', 0)} "
