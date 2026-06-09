@@ -34,6 +34,43 @@ VALID_TYPES = {"data_source", "capability", "agent"}
 MAX_RATIONALE = 2000
 MAX_TASK = 500
 
+# Cairn API requires metric / dimension keys to be snake_case. Raters occasionally
+# emit camelCase (`searchCount`) or kebab-case (`cache-hits`); one bad key 422s
+# the whole batch and blocks the queue. We normalize on the way through and
+# drop anything that still doesn't match.
+KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_CAMEL_RE_1 = re.compile(r"(.)([A-Z][a-z]+)")
+_CAMEL_RE_2 = re.compile(r"([a-z0-9])([A-Z])")
+
+
+def to_snake(key: str) -> str:
+    # camelCase / PascalCase / kebab-case / spaces → snake_case.
+    s = _CAMEL_RE_1.sub(r"\1_\2", key)
+    s = _CAMEL_RE_2.sub(r"\1_\2", s)
+    s = s.replace("-", "_").replace(" ", "_")
+    s = re.sub(r"_+", "_", s).strip("_").lower()
+    return s
+
+
+def normalize_keys(obj: dict, field: str) -> tuple[dict, list[str]]:
+    """Return (cleaned_map, dropped_keys). On collision after normalization,
+    keep the first value seen."""
+    src = obj.get(field)
+    if not isinstance(src, dict):
+        return {}, []
+    cleaned: dict = {}
+    dropped: list[str] = []
+    for k, v in src.items():
+        if not isinstance(k, str):
+            dropped.append(repr(k)); continue
+        nk = k if KEY_RE.match(k) else to_snake(k)
+        if not KEY_RE.match(nk):
+            dropped.append(k); continue
+        if nk in cleaned:
+            continue
+        cleaned[nk] = v
+    return cleaned, dropped
+
 
 def fail(msg: str) -> None:
     print(f"cs-sanitize-rating: {msg}", file=sys.stderr)
@@ -94,12 +131,28 @@ def main() -> None:
             fail("weight must be a number in (0, 1]")
 
     if "dimensions" in obj:
-        dims = obj["dimensions"]
-        if not isinstance(dims, dict) or not all(
-            isinstance(k, str) and is_number(v) and 0.0 <= v <= 1.0
-            for k, v in dims.items()
-        ):
-            fail("dimensions must be a flat map of name -> number in [0, 1]")
+        if not isinstance(obj["dimensions"], dict):
+            fail("dimensions must be an object")
+        dims, dropped = normalize_keys(obj, "dimensions")
+        if dropped:
+            print(f"cs-sanitize-rating: dropped dimensions keys: {dropped}", file=sys.stderr)
+        if not all(is_number(v) and 0.0 <= v <= 1.0 for v in dims.values()):
+            fail("dimensions values must be numbers in [0, 1]")
+        if dims:
+            obj["dimensions"] = dims
+        else:
+            del obj["dimensions"]
+
+    if "metrics" in obj:
+        if not isinstance(obj["metrics"], dict):
+            fail("metrics must be an object")
+        metrics, dropped = normalize_keys(obj, "metrics")
+        if dropped:
+            print(f"cs-sanitize-rating: dropped metrics keys: {dropped}", file=sys.stderr)
+        if metrics:
+            obj["metrics"] = metrics
+        else:
+            del obj["metrics"]
 
     salvage_field(obj, "rationale", MAX_RATIONALE)
     salvage_field(obj, "task", MAX_TASK)

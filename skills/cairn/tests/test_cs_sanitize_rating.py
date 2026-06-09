@@ -147,6 +147,67 @@ def test_rejects_missing_reviewee():
     check("no-reviewee: non-zero exit", proc.returncode != 0, "expected reject")
 
 
+def test_normalizes_camelcase_metric_keys():
+    # The bug that motivated this guard: the rater emitted `searchCount` and
+    # the cairn API 422'd the whole batch on the snake_case rule.
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "tool://web-search"},
+        "score": 0.8,
+        "metrics": {"searchCount": 1, "durationSeconds": 5.0, "cache_hits": 3},
+    }
+    proc = run(rating)
+    check("camel-metrics: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "camel-metrics: keys snake_cased",
+        out["metrics"] == {"search_count": 1, "duration_seconds": 5.0, "cache_hits": 3},
+        repr(out.get("metrics")),
+    )
+
+
+def test_normalizes_dimension_keys_and_drops_unsalvageable():
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "mcp://x"},
+        "score": 0.7,
+        "dimensions": {
+            "Accuracy": 0.9,         # PascalCase → accuracy
+            "cache-hits": 0.5,       # kebab → cache_hits (but invalid: value not name issue? value is 0.5, ok)
+            "p95 latency": 0.6,      # space → p95_latency
+            "!!!": 0.4,              # unsalvageable → drop
+        },
+    }
+    proc = run(rating)
+    check("dim-norm: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "dim-norm: normalized + unsalvageable dropped",
+        out["dimensions"] == {"accuracy": 0.9, "cache_hits": 0.5, "p95_latency": 0.6},
+        repr(out.get("dimensions")),
+    )
+
+
+def test_keeps_first_value_on_post_normalization_collision():
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "mcp://x"},
+        "score": 0.7,
+        "metrics": {"searchCount": 1, "search_count": 99},  # both → search_count
+    }
+    proc = run(rating)
+    check("collision: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "collision: first value wins",
+        out["metrics"] == {"search_count": 1},
+        repr(out.get("metrics")),
+    )
+
+
 if __name__ == "__main__":
     for fn in [
         test_salvages_contaminated_rationale_and_keeps_clean_fields,
@@ -154,6 +215,9 @@ if __name__ == "__main__":
         test_legit_angle_bracket_not_truncated,
         test_rejects_score_out_of_range,
         test_rejects_missing_reviewee,
+        test_normalizes_camelcase_metric_keys,
+        test_normalizes_dimension_keys_and_drops_unsalvageable,
+        test_keeps_first_value_on_post_normalization_collision,
     ]:
         print(fn.__name__)
         fn()

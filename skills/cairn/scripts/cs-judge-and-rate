@@ -108,9 +108,9 @@ SCHEMA='{
     "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
     "task": {"type": "string", "maxLength": 500},
     "rationale": {"type": "string", "maxLength": 2000},
-    "dimensions": {"type": "object"},
+    "dimensions": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}},
     "failure_modes": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
-    "metrics": {"type": "object"},
+    "metrics": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}},
     "task_tags": {"type": "array", "items": {"type": "string"}, "maxItems": 10}
   }
 }'
