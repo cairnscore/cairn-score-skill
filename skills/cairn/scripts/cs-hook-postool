@@ -18,6 +18,9 @@
 # Privacy / safety knobs (env):
 #   CAIRN_HOOK_ENABLED          — "0" / "false" / "no" disables this hook silently
 #                                  (default: enabled).
+#   CAIRN_HOOK_DRY_RUN          — "1" prints the briefing JSON to stdout and exits
+#                                  before dispatching the rater. For tests and
+#                                  debugging; nothing is queued or sent anywhere.
 #   CAIRN_HOOK_HOSTS_DENYLIST   — comma-separated substrings. If the extracted
 #                                  URL or external_id contains any of them, the
 #                                  event is skipped (no briefing leaves the
@@ -70,6 +73,9 @@ BRIEFING=$(
   HOSTS_DENYLIST="${CAIRN_HOOK_HOSTS_DENYLIST:-}" \
   python3 <<'PY'
 import os, sys, json, re
+
+sys.path.insert(0, os.path.join(os.environ["SKILL_DIR"], "scripts"))
+import cs_canonical
 
 raw = os.environ.get("INPUT") or ""
 try:
@@ -158,9 +164,11 @@ task = None
 if tool_name == "WebFetch":
     url = tool_input.get("url")
     if url:
-        if _denied(url):
+        canon = cs_canonical.canonicalize_url(url)
+        if _denied(url) or _denied(canon):
             sys.exit(0)
-        entity = {"type": "data_source", "external_id": url}
+        # Identity is canonical; the task line keeps the raw URL as evidence.
+        entity = {"type": "data_source", "external_id": canon}
         prompt = (tool_input.get("prompt") or "")[:120]
         task = f"WebFetch {url}" + (f" — {prompt}" if prompt else "")
 
@@ -173,7 +181,7 @@ elif tool_name == "WebSearch":
 elif tool_name.startswith("mcp__"):
     parts = tool_name.split("__", 2)
     if len(parts) >= 2:
-        server = parts[1]
+        server = cs_canonical.canonical_mcp_server(parts[1])
         tool_part = parts[2] if len(parts) > 2 else "(unknown)"
         ext_id = f"mcp://{server}"
         if _denied(ext_id) or _denied(server):
@@ -190,9 +198,15 @@ elif tool_name == "Bash":
     m = re.search(NET_VERB + r".*?(https?://[^\s'\"<>)]+)", cmd, re.DOTALL)
     if m:
         url = m.group(1).rstrip(".,;)")
-        if _denied(url):
+        canon = cs_canonical.canonicalize_url(url)
+        # The command text is the only thing we see — whole-segment shell vars
+        # ($PID) canonicalize to {id}, but if shell syntax survives ($(cmd),
+        # backticks, abc$def) the real target is unknowable: skip, don't guess.
+        if not cs_canonical.is_resolved(canon):
             sys.exit(0)
-        entity = {"type": "data_source", "external_id": url}
+        if _denied(url) or _denied(canon):
+            sys.exit(0)
+        entity = {"type": "data_source", "external_id": canon}
         # Truncate cmd preview AFTER redaction so credentials don't slip into the task line.
         task = f"Bash network call ({url}): {_redact(cmd)[:120]}"
 
@@ -238,6 +252,12 @@ PY
 )
 
 if [[ -z "$BRIEFING" ]]; then
+  exit 0
+fi
+
+# Test/debug escape hatch: emit the briefing and stop — no rater, no queue.
+if [[ "${CAIRN_HOOK_DRY_RUN:-}" == "1" ]]; then
+  echo "$BRIEFING"
   exit 0
 fi
 
