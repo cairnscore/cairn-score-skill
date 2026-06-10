@@ -60,6 +60,18 @@ URL_CASES = [
     ),
     ("https://example.com/search?q=x&b=2&a=1#frag", "https://example.com/search?a=1&b=2&q=x"),
     ("HTTPS://X.COM:443/Path/", "https://x.com/Path"),
+    # credential params and userinfo dropped — ids are public and permanent
+    (
+        "https://api.foo.example/data?api_key=SECRET123&q=x",
+        "https://api.foo.example/data?q=x",
+    ),
+    ("https://api.foo.example/data?TOKEN=abc123", "https://api.foo.example/data"),
+    (
+        "https://cdn.example.com/file.bin"
+        "?X-Amz-Signature=deadbeef&X-Amz-Credential=AKIA%2F1&X-Amz-Date=20260610",
+        "https://cdn.example.com/file.bin",
+    ),
+    ("https://user:hunter2@api.example.com/v1", "https://api.example.com/v1"),
     # deliberate non-rules
     ("https://pubmed.ncbi.nlm.nih.gov/24160679", "https://pubmed.ncbi.nlm.nih.gov/24160679"),
     (

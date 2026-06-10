@@ -7,11 +7,12 @@ change it here in the same release.
 
 The same conceptual source must always get the same external_id, or ratings
 split across duplicate entities and confidence never accumulates. The rules:
-lowercase scheme/host; strip trailing slash, fragment, and default port; drop
-volatile query params (pagination/ordering) and sort the rest; collapse a
-whole path segment or query value that is a UUID or a placeholder spelling
-($var, ${var}, {var}, :var, <var>) to a literal `{id}`. Bare numeric segments
-survive — a PubMed id names a paper, not a parameter.
+lowercase scheme/host; strip trailing slash, fragment, default port, and URL
+userinfo; drop volatile (pagination/ordering) and credential-bearing query
+params (ids are public — secrets must never become identity) and sort the
+rest; collapse a whole path segment or query value that is a UUID or a
+placeholder spelling ($var, ${var}, {var}, :var, <var>) to a literal `{id}`.
+Bare numeric segments survive — a PubMed id names a paper, not a parameter.
 
 Pure stdlib, importable on python3.9+ (hook environments vary).
 """
@@ -22,6 +23,30 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 _VOLATILE_QUERY_PARAMS = frozenset(
     {"limit", "offset", "page", "per_page", "page_size", "cursor", "sort", "order"}
 )
+
+# Credential-bearing params say who is calling, never what the source is —
+# and external_ids are public and effectively permanent. Dropped like
+# volatile params; `x-amz-*` is a prefix rule so presigned URLs reduce to
+# the bare object path.
+_CREDENTIAL_QUERY_PARAMS = frozenset(
+    {
+        "api_key", "api-key", "apikey",
+        "access_token", "access-token",
+        "auth_token", "auth-token",
+        "token", "key", "secret", "client_secret",
+        "password", "passwd",
+        "sig", "signature",
+    }
+)
+
+
+def _dropped_param(key: str) -> bool:
+    lowered = key.lower()
+    return (
+        lowered in _VOLATILE_QUERY_PARAMS
+        or lowered in _CREDENTIAL_QUERY_PARAMS
+        or lowered.startswith("x-amz-")
+    )
 
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -48,7 +73,7 @@ def _canonical_query(query: str) -> str:
     pairs = [
         (k, "{id}" if _PLACEHOLDER_RE.match(v) or _UUID_RE.match(v) else v)
         for k, v in parse_qsl(query, keep_blank_values=True)
-        if k.lower() not in _VOLATILE_QUERY_PARAMS
+        if not _dropped_param(k)
     ]
     pairs.sort()
     return urlencode(pairs, quote_via=quote, safe="{}")
@@ -62,6 +87,9 @@ def canonicalize_url(url: str) -> str:
     if scheme not in ("http", "https"):
         return url
     netloc = p.netloc.lower()
+    if "@" in netloc:
+        # Userinfo (user:password@) is a credential, never identity.
+        netloc = netloc.rsplit("@", 1)[1]
     default_port = ":80" if scheme == "http" else ":443"
     if netloc.endswith(default_port):
         netloc = netloc[: -len(default_port)]
