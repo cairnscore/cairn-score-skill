@@ -13,7 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from cs_canonical import canonical_mcp_server, canonicalize_url, is_resolved  # noqa: E402
+from cs_canonical import (  # noqa: E402
+    canonical_mcp_server,
+    canonicalize_url,
+    has_shell_syntax,
+    is_resolved,
+)
 
 FAILURES = []
 
@@ -82,22 +87,44 @@ def test_fixed_point():
 
 
 def test_is_resolved():
-    check("resolved: plain url", is_resolved(canonicalize_url("https://x.com/a/b")))
+    check("resolved: plain url", is_resolved("https://x.com/a/b"))
+    check("resolved: whole-segment var collapses", is_resolved("https://x.com/$PID/c"))
     check(
-        "resolved: whole-segment var collapses",
-        is_resolved(canonicalize_url("https://x.com/$PID/c")),
+        "resolved: whole query value collapses",
+        is_resolved("https://x.com/api?post_id=$PID"),
     )
     check(
         "unresolved: command substitution",
-        not is_resolved(canonicalize_url("https://x.com/$(cat f)/y")),
+        not is_resolved("https://x.com/$(cat f)/y"),
     )
     check(
         "unresolved: partial interpolation",
-        not is_resolved(canonicalize_url("https://x.com/abc$def/y")),
+        not is_resolved("https://x.com/abc$def/y"),
     )
     check(
         "unresolved: backtick",
-        not is_resolved(canonicalize_url("https://x.com/`hostname`/y")),
+        not is_resolved("https://x.com/`hostname`/y"),
+    )
+    # In shell command text, "$filter"/"$5" may be expansions — quoting context
+    # is unrecoverable, so Bash-extracted URLs stay conservative.
+    check(
+        "unresolved (bash-strict): OData query key",
+        not is_resolved("https://api.x.com/odata?$filter=Price gt 20"),
+    )
+    check(
+        "unresolved (bash-strict): literal-dollar path",
+        not is_resolved("https://shop.example/deals/$5-meals"),
+    )
+
+
+def test_has_shell_syntax():
+    check("shell: command substitution", has_shell_syntax("https://x.com/$(boom)/y"))
+    check("shell: backtick", has_shell_syntax("https://x.com/`id`/y"))
+    check("literal: OData key allowed", not has_shell_syntax("https://api.x.com/odata?$filter=x"))
+    check("literal: dollar path allowed", not has_shell_syntax("https://shop.example/deals/$5-meals"))
+    check(
+        "literal: placeholder grammar allowed",
+        not has_shell_syntax("https://x.com/posts/${POST_ID}/comments"),
     )
 
 
@@ -119,6 +146,7 @@ if __name__ == "__main__":
         test_canonicalize_url,
         test_fixed_point,
         test_is_resolved,
+        test_has_shell_syntax,
         test_canonical_mcp_server,
     ]:
         print(fn.__name__)

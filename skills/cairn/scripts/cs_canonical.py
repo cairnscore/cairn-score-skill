@@ -70,11 +70,37 @@ def canonicalize_url(url: str) -> str:
 
 
 def is_resolved(url: str) -> bool:
-    """False when shell syntax survives canonicalization — `$(cmd)` substitutions,
-    backticks, or partial interpolations like `abc$def`. The actual target of
-    such a call is unknowable from command text; a rating attached to a garbage
-    identity is worse than no rating."""
-    return "$" not in url and "`" not in url
+    """For URLs extracted from *shell command text* (the hook's Bash branch).
+
+    False when a `$` or backtick survives placeholder collapse — `$(cmd)`,
+    backticks, partial interpolations (`abc$def`), or `$`-prefixed query keys
+    (`?$filter=`). In command text those may have been expanded by the shell
+    before execution, so the actually-fetched URL is unknowable; a rating on a
+    garbage identity is worse than none. Whole-segment / whole-value `$var`
+    forms are fine: they collapse to `{id}`, and any expansion was a concrete
+    id in the same family. Deliberately conservative: a single-quoted OData
+    `?$filter=` is also skipped — quoting context isn't recoverable here.
+    Don't use this for literal-context URLs (WebFetch, judge output), where a
+    raw `$` is just a character; use `has_shell_syntax` there."""
+    p = urlparse(url)
+    if p.scheme.lower() not in ("http", "https"):
+        return "$" not in url and "`" not in url
+    residual = [p.netloc]
+    residual.extend(_canonical_segment(s) for s in p.path.split("/"))
+    for k, v in parse_qsl(p.query, keep_blank_values=True):
+        residual.append(k)
+        residual.append("{id}" if _PLACEHOLDER_RE.match(v) or _UUID_RE.match(v) else v)
+    rest = "/".join(residual)
+    return "$" not in rest and "`" not in rest
+
+
+def has_shell_syntax(url: str) -> bool:
+    """True only for unambiguous shell machinery — `$(…)` command substitution
+    or backticks — which is never legitimate in an identity. For literal-context
+    ids (judge output, WebFetch URLs): a bare `$` is allowed (`?$filter=`,
+    `/deals/$5-meals` are real URLs) and `${var}` belongs to the placeholder
+    grammar, collapsed by canonicalization."""
+    return "$(" in url or "`" in url
 
 
 def canonical_mcp_server(token: str) -> str:

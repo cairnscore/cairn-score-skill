@@ -128,15 +128,20 @@ def main() -> None:
     # The judge sometimes rewrites the briefing's external_id (its own
     # placeholder spelling, a raw UUID instance, the plugin-prefixed MCP
     # name). Canonicalize here so a canonical id reaches cs-rate regardless
-    # of what the model emitted; reject identities shell syntax leaked into.
-    ext = cs_canonical.canonicalize_url(reviewee["external_id"])
+    # of what the model emitted. Judge output is a literal context, so only
+    # unambiguous shell machinery is rejected — a bare `$` is a legal URL
+    # character (`?$filter=`), and `${var}` is placeholder grammar that
+    # canonicalization collapses. (The Bash-text strictness lives in the
+    # hook's is_resolved check, where expansion ambiguity is real.)
+    raw_ext = reviewee["external_id"]
+    if cs_canonical.has_shell_syntax(raw_ext):
+        fail(f"external_id contains shell syntax: {raw_ext!r}")
+    ext = cs_canonical.canonicalize_url(raw_ext)
     if ext.startswith("mcp://"):
         # Per-tool ids are mcp://<server>#<tool> — canonicalize the server
         # portion only, preserving the tool fragment.
         server, sep, tool = ext[len("mcp://"):].partition("#")
         ext = "mcp://" + cs_canonical.canonical_mcp_server(server) + sep + tool
-    if ext.startswith(("http://", "https://")) and not cs_canonical.is_resolved(ext):
-        fail(f"unresolvable external_id (shell syntax survives): {ext!r}")
     reviewee["external_id"] = ext
 
     score = obj.get("score")
