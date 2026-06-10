@@ -208,6 +208,54 @@ def test_keeps_first_value_on_post_normalization_collision():
     )
 
 
+def test_canonicalizes_external_id():
+    rating = {
+        "reviewee": {
+            "type": "data_source",
+            "external_id": "https://www.moltbook.com/api/v1/posts/$ID/comments?limit=80",
+        },
+        "score": 0.8,
+    }
+    proc = run(rating)
+    check("canon-id: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "canon-id: placeholder and volatile param collapsed",
+        out["reviewee"]["external_id"]
+        == "https://www.moltbook.com/api/v1/posts/{id}/comments",
+        out["reviewee"]["external_id"],
+    )
+
+
+def test_canonicalizes_plugin_mcp_name():
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "mcp://plugin_cairn_cairn"},
+        "score": 0.9,
+    }
+    proc = run(rating)
+    check("mcp-name: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "mcp-name: plugin prefix collapsed",
+        out["reviewee"]["external_id"] == "mcp://cairn",
+        out["reviewee"]["external_id"],
+    )
+
+
+def test_rejects_unresolvable_external_id():
+    rating = {
+        "reviewee": {"type": "data_source", "external_id": "https://x.com/$(boom)/y"},
+        "score": 0.5,
+    }
+    proc = run(rating)
+    check("unresolvable-id: non-zero exit", proc.returncode != 0, "expected reject")
+    check("unresolvable-id: no stdout", proc.stdout.strip() == "", repr(proc.stdout))
+
+
 if __name__ == "__main__":
     for fn in [
         test_salvages_contaminated_rationale_and_keeps_clean_fields,
@@ -218,6 +266,9 @@ if __name__ == "__main__":
         test_normalizes_camelcase_metric_keys,
         test_normalizes_dimension_keys_and_drops_unsalvageable,
         test_keeps_first_value_on_post_normalization_collision,
+        test_canonicalizes_external_id,
+        test_canonicalizes_plugin_mcp_name,
+        test_rejects_unresolvable_external_id,
     ]:
         print(fn.__name__)
         fn()

@@ -22,6 +22,10 @@ cs-rate's lenient contract untouched.
 import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cs_canonical  # noqa: E402
 
 # Markers that only appear when a model emits a tool call / XML as text:
 #   - any closing tag, e.g. </rationale> or its corruption </anionale>
@@ -120,6 +124,17 @@ def main() -> None:
         fail(f"reviewee.type must be one of {sorted(VALID_TYPES)}")
     if not isinstance(reviewee.get("external_id"), str) or not reviewee["external_id"]:
         fail("reviewee.external_id must be a non-empty string")
+
+    # The judge sometimes rewrites the briefing's external_id (its own
+    # placeholder spelling, a raw UUID instance, the plugin-prefixed MCP
+    # name). Canonicalize here so a canonical id reaches cs-rate regardless
+    # of what the model emitted; reject identities shell syntax leaked into.
+    ext = cs_canonical.canonicalize_url(reviewee["external_id"])
+    if ext.startswith("mcp://"):
+        ext = "mcp://" + cs_canonical.canonical_mcp_server(ext[len("mcp://"):])
+    if ext.startswith(("http://", "https://")) and not cs_canonical.is_resolved(ext):
+        fail(f"unresolvable external_id (shell syntax survives): {ext!r}")
+    reviewee["external_id"] = ext
 
     score = obj.get("score")
     if not is_number(score) or not (0.0 <= score <= 1.0):
