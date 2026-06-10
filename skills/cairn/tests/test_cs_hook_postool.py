@@ -139,6 +139,36 @@ def test_credentials_redacted_in_task_line():
     check("redact-task: redaction marker present", "[REDACTED]" in b["task"], b["task"])
 
 
+def test_userinfo_redacted_in_task_and_dropped_from_identity():
+    proc = run_hook({
+        "tool_name": "WebFetch",
+        "session_id": "test-hook-g",
+        "tool_input": {"url": "https://user:hunter2@api.example.com/v1/feed"},
+        "tool_response": {"result": "ok"},
+    })
+    b = briefing_or_none(proc)
+    check("userinfo: briefing emitted", b is not None, proc.stderr)
+    if not b:
+        return
+    check("userinfo: password absent from task", "hunter2" not in b["task"], b["task"])
+    check(
+        "userinfo: identity has no userinfo",
+        b["entity"]["external_id"] == "https://api.example.com/v1/feed",
+        b["entity"]["external_id"],
+    )
+
+
+def test_non_string_url_skipped_not_crashed():
+    proc = run_hook({
+        "tool_name": "WebFetch",
+        "session_id": "test-hook-h",
+        "tool_input": {"url": {"nested": "object"}},
+        "tool_response": {},
+    })
+    check("non-string-url: exit 0", proc.returncode == 0, proc.stderr[:200])
+    check("non-string-url: no briefing", proc.stdout.strip() == "", proc.stdout[:120])
+
+
 def test_denylist_checks_canonical_form():
     env_extra = {"CAIRN_HOOK_HOSTS_DENYLIST": "moltbook.com"}
     env = dict(os.environ)
@@ -168,6 +198,8 @@ if __name__ == "__main__":
         test_mcp_plugin_prefix_collapsed,
         test_unresolvable_url_skipped,
         test_credentials_redacted_in_task_line,
+        test_userinfo_redacted_in_task_and_dropped_from_identity,
+        test_non_string_url_skipped_not_crashed,
         test_denylist_checks_canonical_form,
     ]:
         print(fn.__name__)

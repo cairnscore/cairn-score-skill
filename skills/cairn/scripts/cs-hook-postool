@@ -134,6 +134,9 @@ if _cadence > 1:
 #   ?api_key=XXX, ?token=XXX, &access_token=XXX
 #   "api_key": "XXX" inside JSON
 _REDACTORS = [
+    # URL userinfo (https://user:pass@host/...) — the password is a credential;
+    # canonicalization strips it from identity, so evidence must not keep it.
+    (re.compile(r"(https?://)[^/\s'\"@]+@", re.IGNORECASE), r"\1[REDACTED]@"),
     # Authorization header (Bearer, Basic, custom schemes) — match the full value
     # up to the next quote / comma / newline / closing brace.
     (re.compile(r"(Authorization\s*[:=]\s*)[^\"'\n,}]+", re.IGNORECASE), r"\1[REDACTED]"),
@@ -163,7 +166,8 @@ task = None
 
 if tool_name == "WebFetch":
     url = tool_input.get("url")
-    if url:
+    # Hooks must never crash on odd input shapes — skip, don't rate.
+    if isinstance(url, str) and url:
         canon = cs_canonical.canonicalize_url(url)
         if _denied(url) or _denied(canon):
             sys.exit(0)
