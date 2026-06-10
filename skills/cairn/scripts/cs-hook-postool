@@ -167,10 +167,11 @@ if tool_name == "WebFetch":
         canon = cs_canonical.canonicalize_url(url)
         if _denied(url) or _denied(canon):
             sys.exit(0)
-        # Identity is canonical; the task line keeps the raw URL as evidence.
+        # Identity is canonical; the task line keeps the raw URL as evidence
+        # (redacted — query params can carry api_key/token credentials).
         entity = {"type": "data_source", "external_id": canon}
         prompt = (tool_input.get("prompt") or "")[:120]
-        task = f"WebFetch {url}" + (f" — {prompt}" if prompt else "")
+        task = f"WebFetch {_redact(url)}" + (f" — {prompt}" if prompt else "")
 
 elif tool_name == "WebSearch":
     query = tool_input.get("query")
@@ -208,7 +209,7 @@ elif tool_name == "Bash":
             sys.exit(0)
         entity = {"type": "data_source", "external_id": canon}
         # Truncate cmd preview AFTER redaction so credentials don't slip into the task line.
-        task = f"Bash network call ({url}): {_redact(cmd)[:120]}"
+        task = f"Bash network call ({_redact(url)}): {_redact(cmd)[:120]}"
 
 if entity is None:
     sys.exit(0)

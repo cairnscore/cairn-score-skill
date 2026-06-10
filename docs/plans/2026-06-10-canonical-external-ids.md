@@ -112,7 +112,7 @@ After canonicalization, if the URL still contains `$`, `` ` ``, or `${` (e.g. `h
 ## Task 5: Remove the trustgraph reference
 
 - [ ] **Step 1:** Delete `"agent://trustgraph-"` from the reserved-prefix list in `mcp-server/server.py` (~line 76). The service is the authority on reserved prefixes and has never reserved the deprecated name; client-side pre-validation should match.
-- [ ] **Step 2:** `grep -ri trustgraph . --exclude-dir={.git,.venv,dist,.pytest_cache}` → no hits. (Renaming the repo itself `trustgraph-skill` → `cairn-skill` is out of scope: remotes, installs, and the marketplace pointer move with it — owner's call.)
+- [ ] **Step 2:** `grep -ri trustgraph . --exclude-dir={.git,.venv,dist,.pytest_cache,docs}` → no hits. (`docs/plans/` is excluded — this plan legitimately documents the legacy names it removes. Renaming the repo itself `trustgraph-skill` → `cairn-skill` is out of scope: remotes, installs, and the marketplace pointer move with it — owner's call.)
 - [ ] **Step 3:** Commit: `Drop deprecated trustgraph reserved prefix` (trailer).
 
 ---

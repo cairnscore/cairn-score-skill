@@ -246,6 +246,23 @@ def test_canonicalizes_plugin_mcp_name():
     )
 
 
+def test_canonicalizes_plugin_mcp_name_with_tool_fragment():
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "mcp://plugin_cairn_cairn#score"},
+        "score": 0.9,
+    }
+    proc = run(rating)
+    check("mcp-fragment: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "mcp-fragment: server collapsed, tool fragment preserved",
+        out["reviewee"]["external_id"] == "mcp://cairn#score",
+        out["reviewee"]["external_id"],
+    )
+
+
 def test_rejects_unresolvable_external_id():
     rating = {
         "reviewee": {"type": "data_source", "external_id": "https://x.com/$(boom)/y"},
@@ -268,6 +285,7 @@ if __name__ == "__main__":
         test_keeps_first_value_on_post_normalization_collision,
         test_canonicalizes_external_id,
         test_canonicalizes_plugin_mcp_name,
+        test_canonicalizes_plugin_mcp_name_with_tool_fragment,
         test_rejects_unresolvable_external_id,
     ]:
         print(fn.__name__)

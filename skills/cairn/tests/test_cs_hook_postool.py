@@ -124,6 +124,21 @@ def test_unresolvable_url_skipped():
     check("unresolvable: no briefing", proc.stdout.strip() == "", proc.stdout[:120])
 
 
+def test_credentials_redacted_in_task_line():
+    proc = run_hook({
+        "tool_name": "WebFetch",
+        "session_id": "test-hook-f",
+        "tool_input": {"url": "https://api.foo.example/data?api_key=SECRET123&q=x"},
+        "tool_response": {"result": "ok"},
+    })
+    b = briefing_or_none(proc)
+    check("redact-task: briefing emitted", b is not None, proc.stderr)
+    if not b:
+        return
+    check("redact-task: secret absent from task", "SECRET123" not in b["task"], b["task"])
+    check("redact-task: redaction marker present", "[REDACTED]" in b["task"], b["task"])
+
+
 def test_denylist_checks_canonical_form():
     env_extra = {"CAIRN_HOOK_HOSTS_DENYLIST": "moltbook.com"}
     env = dict(os.environ)
@@ -152,6 +167,7 @@ if __name__ == "__main__":
         test_webfetch_uuid_url_canonicalized,
         test_mcp_plugin_prefix_collapsed,
         test_unresolvable_url_skipped,
+        test_credentials_redacted_in_task_line,
         test_denylist_checks_canonical_form,
     ]:
         print(fn.__name__)

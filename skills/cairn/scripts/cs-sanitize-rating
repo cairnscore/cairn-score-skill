@@ -131,7 +131,10 @@ def main() -> None:
     # of what the model emitted; reject identities shell syntax leaked into.
     ext = cs_canonical.canonicalize_url(reviewee["external_id"])
     if ext.startswith("mcp://"):
-        ext = "mcp://" + cs_canonical.canonical_mcp_server(ext[len("mcp://"):])
+        # Per-tool ids are mcp://<server>#<tool> — canonicalize the server
+        # portion only, preserving the tool fragment.
+        server, sep, tool = ext[len("mcp://"):].partition("#")
+        ext = "mcp://" + cs_canonical.canonical_mcp_server(server) + sep + tool
     if ext.startswith(("http://", "https://")) and not cs_canonical.is_resolved(ext):
         fail(f"unresolvable external_id (shell syntax survives): {ext!r}")
     reviewee["external_id"] = ext
