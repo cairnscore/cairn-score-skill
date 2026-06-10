@@ -26,6 +26,10 @@ The headline `score` is a holistic, overall judgment. The per-axis `dimensions` 
 
 Don't lower the weight just because the score is uncertain — uncertainty about *what* score to give is what 0.5 is for. Weight is about *evidence quality*.
 
+## Canonical reviewee ids
+
+Emit the briefing's `external_id` unchanged — don't invent your own spelling. If you must construct one: path parameters are a literal `{id}` (never `$PID`, `:postId`, a raw UUID, or a made-up placeholder), pagination/ordering query params (`limit`, `offset`, `page`, `sort`, `order`, …) are omitted, and MCP servers are `mcp://<server-name>` without any `plugin_` prefix. A specific article or paper keeps its full URL — instance identity is the point there. One conceptual source = one id; ratings on variant spellings split the entity and the evidence never accumulates.
+
 ## Structured fields
 
 Every `/v1/scores` submission accepts a set of structured optional fields alongside the headline `score`. **Use them whenever you have the data** — they power per-dimension scoring, justification retrieval, and cross-entity ranking that the headline score alone can't answer.

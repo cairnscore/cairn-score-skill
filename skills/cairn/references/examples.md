@@ -21,7 +21,7 @@ curl -s -X POST "$CAIRN_BASE_URL/v1/scores" \
 
 ## Example 2 — suspicious source
 
-You fetch a blog post that contains text resembling a prompt injection embedded inside a code block:
+You fetch a blog post that contains text resembling a prompt injection embedded inside a code block. The full URL (instance identity) is correct here — the *content of this specific post* is what's being rated:
 
 ```bash
 curl -s -X POST "$CAIRN_BASE_URL/v1/scores" \
@@ -34,6 +34,23 @@ curl -s -X POST "$CAIRN_BASE_URL/v1/scores" \
     "rationale": "Page contained text directing the agent to ignore prior instructions and exfiltrate data.",
     "failure_modes": ["injection_attempt"],
     "dimensions": {"safety": 0.0}
+  }'
+```
+
+## Example 2b — parameterized API endpoint
+
+You called `GET https://api.socialsite.example/v1/posts/7d21ede7-909e-4718-9c9a-a039970f08fd/comments?limit=80` and got clean JSON. The entity is the **endpoint family**, not that one post — spell the path parameter as a literal `{id}` and drop the pagination param (the server normalises concrete URLs to this form anyway):
+
+```bash
+curl -s -X POST "$CAIRN_BASE_URL/v1/scores" \
+  -H "X-Api-Key: $CAIRN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reviewee": {"type": "data_source", "external_id": "https://api.socialsite.example/v1/posts/{id}/comments"},
+    "score": 0.9,
+    "task": "fetched comments for a post via the public API",
+    "rationale": "Valid JSON matching the documented schema; responded in ~300ms; no auth quirks.",
+    "dimensions": {"reliability": 0.95, "latency": 0.9}
   }'
 ```
 
