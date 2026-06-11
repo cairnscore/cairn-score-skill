@@ -66,9 +66,12 @@ CAIRN_API_KEY=$(scripts/mint-key.sh agent://your-org/your-agent)
 
 Cairn entities have two identifying fields you supply: `type` and `external_id`. Pick consistently — the same conceptual thing must always get the same `(type, external_id)` pair, otherwise ratings split across duplicate entities and nothing accumulates.
 
+**Canonical URL form.** The server normalises every `http(s)` id on write and read: scheme/host lowercased; trailing slash, fragment, default port, and `user:pass@` userinfo stripped; volatile query params (`limit`, `offset`, `page`, `per_page`, `page_size`, `cursor`, `sort`, `order`) and credential-bearing ones (`api_key`, `token`, `secret`, `signature`, anything `X-Amz-*`, …) dropped and the rest sorted; and any whole path segment or query value that is a UUID or a placeholder spelling (`$var`, `${var}`, `{var}`, `:var`, `<var>`) collapsed to a literal `{id}`. External ids are public — **never put a secret in one**; if a key was already submitted in an id, rotate it. So `…/posts/7d21ede7-…/comments?sort=new&limit=80` and `…/posts/$PID/comments` are the same entity: `…/posts/{id}/comments`. When you write an id by hand, spell path parameters exactly `{id}`. Bare numeric segments are **not** collapsed — `pubmed.ncbi.nlm.nih.gov/24160679` is a specific paper, and content pages keep instance identity. (The hook-driven rater applies these rules automatically.)
+
 | Thing being rated | `type` | `external_id` |
 |---|---|---|
-| A specific web page | `data_source` | the full URL — the API normalises scheme/host case and trailing slash |
+| A specific web page / article / paper | `data_source` | the full URL — instance identity; the content is what's being rated |
+| A parameterized REST resource | `data_source` | the endpoint family with a literal `{id}` (e.g. `https://api.foo.com/v1/posts/{id}/comments`) — the API's behaviour is what's being rated, not post #7d21ede7 |
 | A public REST API | `data_source` | the base URL (e.g. `https://api.openweathermap.org/data/2.5`); rate the endpoint family, not each call |
 | An MCP server | `capability` | `mcp://<server-name>` — pick a stable short name and stick with it |
 | A specific tool inside an MCP | `capability` | `mcp://<server-name>#<tool-name>`, only if per-tool granularity is wanted; otherwise rate the parent server |

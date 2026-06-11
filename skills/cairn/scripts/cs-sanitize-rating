@@ -22,6 +22,10 @@ cs-rate's lenient contract untouched.
 import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cs_canonical  # noqa: E402
 
 # Markers that only appear when a model emits a tool call / XML as text:
 #   - any closing tag, e.g. </rationale> or its corruption </anionale>
@@ -120,6 +124,25 @@ def main() -> None:
         fail(f"reviewee.type must be one of {sorted(VALID_TYPES)}")
     if not isinstance(reviewee.get("external_id"), str) or not reviewee["external_id"]:
         fail("reviewee.external_id must be a non-empty string")
+
+    # The judge sometimes rewrites the briefing's external_id (its own
+    # placeholder spelling, a raw UUID instance, the plugin-prefixed MCP
+    # name). Canonicalize here so a canonical id reaches cs-rate regardless
+    # of what the model emitted. Judge output is a literal context, so only
+    # unambiguous shell machinery is rejected — a bare `$` is a legal URL
+    # character (`?$filter=`), and `${var}` is placeholder grammar that
+    # canonicalization collapses. (The Bash-text strictness lives in the
+    # hook's is_resolved check, where expansion ambiguity is real.)
+    raw_ext = reviewee["external_id"]
+    if cs_canonical.has_shell_syntax(raw_ext):
+        fail(f"external_id contains shell syntax: {raw_ext!r}")
+    ext = cs_canonical.canonicalize_url(raw_ext)
+    if ext.startswith("mcp://"):
+        # Per-tool ids are mcp://<server>#<tool> — canonicalize the server
+        # portion only, preserving the tool fragment.
+        server, sep, tool = ext[len("mcp://"):].partition("#")
+        ext = "mcp://" + cs_canonical.canonical_mcp_server(server) + sep + tool
+    reviewee["external_id"] = ext
 
     score = obj.get("score")
     if not is_number(score) or not (0.0 <= score <= 1.0):

@@ -73,7 +73,7 @@ _TAG_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 # Server rejects reviewer-claim or reviewee external_ids with these prefixes
 # (422). Cheaper to catch client-side; covers the documented reservations.
 RESERVED_ID_PREFIXES: tuple[str, ...] = (
-    "agent://trustgraph-",
+    "agent://cairn-",
     "agent://anthropic/",
 )
 
