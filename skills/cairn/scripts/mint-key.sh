@@ -72,7 +72,15 @@ done
 # Take the lock. fd 9 is held by THIS shell; the python3 invocation takes
 # LOCK_EX on the same OFD via <&9. fd 9 stays open until EXIT trap fires.
 exec 9>"$LOCK"
-python3 -c 'import fcntl,sys; fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)' <&9
+# fcntl is POSIX-only — absent on native-Windows CPython. Degrade to a
+# best-effort no-lock there instead of aborting under `set -euo pipefail`
+# (safe on a single-user desktop). See issue #10.
+python3 -c 'import sys
+try:
+    import fcntl
+    fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)
+except ImportError:
+    pass' <&9
 
 # Double-check after lock acquire: another process may have minted while we
 # were waiting for the lock. --remint bypasses the cache (overwrites the

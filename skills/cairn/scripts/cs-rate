@@ -36,7 +36,15 @@ INPUT=$(cat)
 LOCK="${CAIRN_QUEUE}.lock"
 exec 9>"$LOCK"
 trap 'exec 9>&-' EXIT
-python3 -c 'import fcntl,sys; fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)' <&9
+# fcntl is POSIX-only — absent on native-Windows CPython. Degrade to a
+# best-effort no-lock there instead of aborting under `set -euo pipefail`
+# (safe on a single-user desktop). See issue #10.
+python3 -c 'import sys
+try:
+    import fcntl
+    fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)
+except ImportError:
+    pass' <&9
 
 # Validate, normalize, re-emit compactly.
 INPUT="$INPUT" python3 <<'PY' >> "$CAIRN_QUEUE"
