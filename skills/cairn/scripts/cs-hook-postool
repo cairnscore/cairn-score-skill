@@ -97,7 +97,10 @@ except ValueError:
     _cadence = 1
 
 if _cadence > 1:
-    import fcntl
+    try:
+        import fcntl  # POSIX-only; absent on native-Windows CPython (issue #10)
+    except ImportError:
+        fcntl = None
     _session_id = data.get("session_id") or "no-session"
     # Sanitize for filesystem path (claude code uses uuid-ish ids; belt-and-suspenders).
     _safe_sid = re.sub(r"[^A-Za-z0-9_-]", "_", _session_id)[:64]
@@ -110,7 +113,8 @@ if _cadence > 1:
     _old_umask = os.umask(0o077)
     try:
         with open(_lock_path, "a+") as _lf:
-            fcntl.flock(_lf.fileno(), fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(_lf.fileno(), fcntl.LOCK_EX)
             try:
                 with open(_counter_path) as _cf:
                     _count = int((_cf.read().strip() or "0"))

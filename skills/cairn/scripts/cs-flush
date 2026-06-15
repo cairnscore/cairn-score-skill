@@ -78,7 +78,15 @@ exec 9>"$LOCK"
 # Combined EXIT trap: capture exit code, release the lock fd, log completion.
 # Capture $? FIRST — anything in the trap body resets it.
 trap '_rc=$?; exec 9>&-; echo "[$(date '"'"'+%Y-%m-%dT%H:%M:%S%z'"'"')] cs-flush: exit code=$_rc" >> "$_LOG"' EXIT
-python3 -c 'import fcntl,sys; fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)' <&9
+# fcntl is POSIX-only — absent on native-Windows CPython. Degrade to a
+# best-effort no-lock there instead of aborting under `set -euo pipefail`
+# (safe on a single-user desktop). See issue #10.
+python3 -c 'import sys
+try:
+    import fcntl
+    fcntl.flock(sys.stdin.fileno(), fcntl.LOCK_EX)
+except ImportError:
+    pass' <&9
 
 [[ -s "$CAIRN_QUEUE" ]] || exit 0
 
