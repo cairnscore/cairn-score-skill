@@ -1,6 +1,6 @@
 {
   "name": "cairn",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Trust + reputation auto-rating for sources, MCP servers, and tools. Rates every WebFetch/WebSearch/MCP/Bash-net call in the background. Default rater uses your claude.ai subscription (no extra $ charged \u2014 each rating draws from the same usage allowance as your normal Claude work, so heavy use can exhaust your quota faster). Switch to ANTHROPIC_API_KEY for direct billing at ~$0.0003/rating. See https://cairnscore.ai/privacy.",
   "author": {
     "name": "Gus Ellerm & Ryan Chard",
