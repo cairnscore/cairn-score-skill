@@ -189,22 +189,33 @@ PY
     command -v claude >/dev/null || { echo "cs-judge-and-rate[claude-cli]: 'claude' not on PATH" >&2; exit 1; }
 
     CAIRN_OUT=$(mktemp)
-    trap 'rm -f "$CAIRN_OUT"' EXIT
+    CAIRN_SYS=$(mktemp)
+    trap 'rm -f "$CAIRN_OUT" "$CAIRN_SYS"' EXIT
 
     # --setting-sources "" / --disable-slash-commands / --tools "" strip Claude Code
     # context bloat (hooks, skills, plugins) so the rater session is minimal.
     # CAIRN_NESTED=1 stops our hooks from firing if any tool call leaks through.
-    CAIRN_NESTED=1 claude -p \
+    #
+    # Keep large values OUT of argv. On Windows/Git-Bash the argv length ceiling
+    # (~32KB, E2BIG) makes `claude` fail to exec with "Argument list too long".
+    # The system prompt alone is ~34KB (SKILL.md + rubric + examples + scoring
+    # model concatenated), and the briefing can reach ~48KB (16KB req + 32KB
+    # resp caps) — either one blows the limit on its own. So:
+    #   - briefing      → piped via stdin (no length limit)
+    #   - system prompt → written to a temp file, passed via --system-prompt-file
+    # The schema (~1KB) stays inline. Portable across platforms; on Linux/macOS
+    # the old argv form happened to fit, which is why this slipped through.
+    printf '%s' "$SYS_PROMPT" > "$CAIRN_SYS"
+    printf '%s' "$BRIEFING" | CAIRN_NESTED=1 claude -p \
       --model "$CAIRN_RATER_MODEL" \
       --setting-sources "" \
       --disable-slash-commands \
       --tools "" \
       --no-session-persistence \
-      --system-prompt "$SYS_PROMPT" \
+      --system-prompt-file "$CAIRN_SYS" \
       --json-schema "$SCHEMA" \
       --output-format json \
-      "$BRIEFING" \
-      < /dev/null > "$CAIRN_OUT" 2>&1 || {
+      > "$CAIRN_OUT" 2>&1 || {
         echo "cs-judge-and-rate[claude-cli]: claude -p failed:" >&2
         cat "$CAIRN_OUT" >&2
         exit 1
