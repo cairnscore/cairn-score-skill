@@ -27,13 +27,19 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         FAILURES.append(name)
 
 
-def run_hook(hook_input: dict) -> subprocess.CompletedProcess:
+def run_hook(hook_input: dict, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["CAIRN_HOOK_DRY_RUN"] = "1"
     env.pop("CAIRN_NESTED", None)
     env.pop("CAIRN_HOOK_ENABLED", None)
     env.pop("CAIRN_HOOK_CADENCE", None)  # rate every call in tests
     env.pop("CAIRN_HOOK_HOSTS_DENYLIST", None)
+    # The plugin wrapper injects CAIRN_HARNESS; tests invoke the real script
+    # directly, so default to unset (the fail-closed baseline) and let cases
+    # opt in via extra_env.
+    env.pop("CAIRN_HARNESS", None)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["bash", str(SCRIPT)],
         input=json.dumps(hook_input),
@@ -169,6 +175,62 @@ def test_non_string_url_skipped_not_crashed():
     check("non-string-url: no briefing", proc.stdout.strip() == "", proc.stdout[:120])
 
 
+def test_websearch_harness_qualified():
+    proc = run_hook(
+        {
+            "tool_name": "WebSearch",
+            "session_id": "test-hook-ws",
+            "tool_input": {"query": "wellington weather"},
+            "tool_response": {"results": []},
+        },
+        extra_env={"CAIRN_HARNESS": "claude-code"},
+    )
+    b = briefing_or_none(proc)
+    check("websearch: briefing emitted", b is not None, proc.stderr)
+    if not b:
+        return
+    check(
+        "websearch: harness-qualified id",
+        b["entity"]["external_id"] == "tool://claude-code/web-search",
+        b["entity"]["external_id"],
+    )
+
+
+def test_websearch_harness_constant_is_folded():
+    # A messy CAIRN_HARNESS still normalizes (defense; the real constant is clean).
+    proc = run_hook(
+        {
+            "tool_name": "WebSearch",
+            "session_id": "test-hook-ws2",
+            "tool_input": {"query": "x"},
+            "tool_response": {"results": []},
+        },
+        extra_env={"CAIRN_HARNESS": "Claude_Code"},
+    )
+    b = briefing_or_none(proc)
+    check("websearch-fold: briefing emitted", b is not None, proc.stderr)
+    if not b:
+        return
+    check(
+        "websearch-fold: id folded to canonical",
+        b["entity"]["external_id"] == "tool://claude-code/web-search",
+        b["entity"]["external_id"],
+    )
+
+
+def test_websearch_fail_closed_without_harness():
+    # No CAIRN_HARNESS (a reused hook outside the first-party plugin): skip the
+    # built-in rating rather than mislabel it.
+    proc = run_hook({
+        "tool_name": "WebSearch",
+        "session_id": "test-hook-ws3",
+        "tool_input": {"query": "x"},
+        "tool_response": {"results": []},
+    })
+    check("websearch-failclosed: exit 0", proc.returncode == 0, proc.stderr[:200])
+    check("websearch-failclosed: no briefing", proc.stdout.strip() == "", proc.stdout[:120])
+
+
 def test_denylist_checks_canonical_form():
     env_extra = {"CAIRN_HOOK_HOSTS_DENYLIST": "moltbook.com"}
     env = dict(os.environ)
@@ -200,6 +262,9 @@ if __name__ == "__main__":
         test_credentials_redacted_in_task_line,
         test_userinfo_redacted_in_task_and_dropped_from_identity,
         test_non_string_url_skipped_not_crashed,
+        test_websearch_harness_qualified,
+        test_websearch_harness_constant_is_folded,
+        test_websearch_fail_closed_without_harness,
         test_denylist_checks_canonical_form,
     ]:
         print(fn.__name__)

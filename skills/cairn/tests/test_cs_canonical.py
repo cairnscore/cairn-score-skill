@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from cs_canonical import (  # noqa: E402
     canonical_mcp_server,
+    canonicalize_capability,
     canonicalize_url,
     has_shell_syntax,
     is_resolved,
@@ -140,6 +141,24 @@ def test_has_shell_syntax():
     )
 
 
+def test_canonicalize_capability():
+    cases = [
+        ("tool://claude-code/web-search", "tool://claude-code/web-search"),
+        ("tool://CLAUDE-CODE/Web-Search", "tool://claude-code/web-search"),
+        ("tool://claude_code/web_search", "tool://claude-code/web-search"),
+        ("tool://claude-code/web-search/", "tool://claude-code/web-search"),
+        ("tool://claude-code//web-search", "tool://claude-code/web-search"),
+        ("tool://web-search", "tool://web-search"),  # legacy bare form
+        ("tool://python-sandbox", "tool://python-sandbox"),
+        ("mcp://cairn", "mcp://cairn"),  # non-tool untouched
+        ("https://x.com/a", "https://x.com/a"),  # non-tool untouched
+    ]
+    for raw, expected in cases:
+        got = canonicalize_capability(raw)
+        check(f"cap: {raw[:48]}", got == expected, got)
+        check(f"cap fixed-point: {expected[:42]}", canonicalize_capability(got) == got)
+
+
 def test_canonical_mcp_server():
     check("mcp: plugin doubled", canonical_mcp_server("plugin_cairn_cairn") == "cairn")
     check(
@@ -159,6 +178,7 @@ if __name__ == "__main__":
         test_fixed_point,
         test_is_resolved,
         test_has_shell_syntax,
+        test_canonicalize_capability,
         test_canonical_mcp_server,
     ]:
         print(fn.__name__)

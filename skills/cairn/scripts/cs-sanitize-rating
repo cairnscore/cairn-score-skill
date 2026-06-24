@@ -142,6 +142,10 @@ def main() -> None:
         # portion only, preserving the tool fragment.
         server, sep, tool = ext[len("mcp://"):].partition("#")
         ext = "mcp://" + cs_canonical.canonical_mcp_server(server) + sep + tool
+    elif ext.startswith("tool://"):
+        # Harness-qualified capability ids fold case/separator (the judge may
+        # echo tool://Claude-Code/Web-Search); byte-identical to the server.
+        ext = cs_canonical.canonicalize_capability(ext)
     reviewee["external_id"] = ext
 
     score = obj.get("score")

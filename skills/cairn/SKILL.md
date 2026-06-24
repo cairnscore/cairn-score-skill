@@ -75,9 +75,12 @@ Cairn entities have two identifying fields you supply: `type` and `external_id`.
 | A public REST API | `data_source` | the base URL (e.g. `https://api.openweathermap.org/data/2.5`); rate the endpoint family, not each call |
 | An MCP server | `capability` | `mcp://<server-name>` — pick a stable short name and stick with it |
 | A specific tool inside an MCP | `capability` | `mcp://<server-name>#<tool-name>`, only if per-tool granularity is wanted; otherwise rate the parent server |
-| A code executor / sandbox | `capability` | a stable URI like `tool://python-sandbox` |
+| A harness built-in tool (web-search, …) | `capability` | `tool://<harness>/<tool>`, e.g. `tool://claude-code/web-search` — see below |
+| A code executor / sandbox | `capability` | a stable URI like `tool://<harness>/code-exec` |
 
 The schema only recognises `data_source`, `capability`, and `agent`. Don't invent new types. Agent-to-agent ratings (the `agent` type) are out of scope for this skill.
+
+**Harness-qualified built-in tools.** A built-in tool like web-search has no quality of its own — its result quality is a property of the **harness** (runtime) that ships it: Claude Code's web-search, a Gemini grounding tool, and a LangChain search wrapper are different implementations. So qualify the identity by harness — `tool://claude-code/web-search`, not a single global `tool://web-search` that averages every harness into one meaningless number. The rule: **qualify a built-in by harness iff swapping the harness changes the result quality for a fixed input** (web-search → yes; code-exec → yes; web-fetch → no, its quality tracks the fetched site, so rate the `data_source` URL instead). Never qualify MCP servers — `mcp://<server>` already *is* its implementation and is portable across harnesses. The harness slug is a fixed lowercase `[a-z0-9-]` constant your integration declares about itself (the Claude Code hook stamps `claude-code` via `CAIRN_HARNESS`); **it is a compile-time constant, never derived from runtime**, and the server folds case/separator so `tool://Claude-Code/Web_Search` and `tool://claude-code/web-search` are one entity. The hook does all of this automatically and fail-closed (no declared harness → it skips the rating rather than mislabel it).
 
 ## Workflow 1 — Before consuming a source or capability
 
