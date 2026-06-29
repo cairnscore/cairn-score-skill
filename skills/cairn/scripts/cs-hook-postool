@@ -183,8 +183,16 @@ if tool_name == "WebFetch":
 
 elif tool_name == "WebSearch":
     query = tool_input.get("query")
-    if query:
-        entity = {"type": "capability", "external_id": "tool://web-search"}
+    # web-search quality is a property of the *harness* that ships it, so the
+    # identity is harness-qualified (tool://<harness>/web-search), not a single
+    # global tool://web-search blob. Fail-closed: if CAIRN_HARNESS is unset (a
+    # reused hook outside the first-party plugin), skip the rating rather than
+    # mislabel it as another harness's — a missing rating is recoverable; a
+    # mislabeled one poisons the protected entity and decay can't undo it.
+    harness = (os.environ.get("CAIRN_HARNESS") or "").strip()
+    if query and harness:
+        ext = cs_canonical.canonicalize_capability(f"tool://{harness}/web-search")
+        entity = {"type": "capability", "external_id": ext}
         task = f"WebSearch: {query[:200]}"
 
 elif tool_name.startswith("mcp__"):

@@ -97,6 +97,22 @@ def canonicalize_url(url: str) -> str:
     return urlunparse((scheme, netloc, path, "", _canonical_query(p.query), ""))
 
 
+def canonicalize_capability(external_id: str) -> str:
+    """Canonical form of a `tool://<harness>/<slug>` capability id, byte-identical
+    to the server's normalize_external_id `tool://` branch: lowercase the whole
+    id and fold `_`→`-` (slug charset is [a-z0-9-]), dropping empty/double/
+    trailing path segments. Without this, tool://claude-code/Web-Search and
+    .../web-search would be distinct entities. Non-`tool://` input is returned
+    unchanged."""
+    p = urlparse(external_id)
+    if p.scheme.lower() != "tool":
+        return external_id
+    netloc = p.netloc.lower().replace("_", "-")
+    segments = [s.replace("_", "-").lower() for s in p.path.rstrip("/").split("/") if s]
+    path = "/" + "/".join(segments) if segments else ""
+    return urlunparse(p._replace(scheme="tool", netloc=netloc, path=path))
+
+
 def is_resolved(url: str) -> bool:
     """For URLs extracted from *shell command text* (the hook's Bash branch).
 

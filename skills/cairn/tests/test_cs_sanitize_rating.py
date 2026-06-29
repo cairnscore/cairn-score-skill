@@ -263,6 +263,23 @@ def test_canonicalizes_plugin_mcp_name_with_tool_fragment():
     )
 
 
+def test_canonicalizes_tool_capability_id():
+    rating = {
+        "reviewee": {"type": "capability", "external_id": "tool://Claude-Code/Web_Search"},
+        "score": 0.8,
+    }
+    proc = run(rating)
+    check("tool-id: exit 0", proc.returncode == 0, proc.stderr)
+    if proc.returncode != 0:
+        return
+    out = json.loads(proc.stdout)
+    check(
+        "tool-id: harness-qualified id folded",
+        out["reviewee"]["external_id"] == "tool://claude-code/web-search",
+        out["reviewee"]["external_id"],
+    )
+
+
 def test_rejects_unresolvable_external_id():
     rating = {
         "reviewee": {"type": "data_source", "external_id": "https://x.com/$(boom)/y"},
@@ -298,6 +315,7 @@ if __name__ == "__main__":
         test_canonicalizes_external_id,
         test_canonicalizes_plugin_mcp_name,
         test_canonicalizes_plugin_mcp_name_with_tool_fragment,
+        test_canonicalizes_tool_capability_id,
         test_rejects_unresolvable_external_id,
         test_accepts_literal_dollar_external_ids,
     ]:

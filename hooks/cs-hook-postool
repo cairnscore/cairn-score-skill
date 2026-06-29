@@ -31,6 +31,12 @@ fi
 # Rating cadence: shell env → userConfig → 1 (rate every call).
 export CAIRN_HOOK_CADENCE="${CAIRN_HOOK_CADENCE:-${CLAUDE_PLUGIN_OPTION_RATING_CADENCE:-1}}"
 
+# Harness identity for built-in tools (web-search): this is the Claude Code
+# plugin, so it declares `claude-code`. Shell env wins (a fork that reuses these
+# scripts in another runtime sets its own). The skill script is fail-closed:
+# with no value, built-in tool ratings are skipped rather than mislabeled.
+export CAIRN_HARNESS="${CAIRN_HARNESS:-claude-code}"
+
 # Rater model: shell env → userConfig → cs-judge-and-rate's own default
 # (claude-haiku-4-5-20251001). Sanity-check the userConfig value: if it
 # doesn't start with "claude-" it's probably a typo, fall back to default
